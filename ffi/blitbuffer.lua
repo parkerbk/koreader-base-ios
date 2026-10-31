@@ -124,6 +124,7 @@ void BB_blend_rect(BlitBuffer * restrict bb, unsigned int x, unsigned int y, uns
 void BB_blend_RGB32_over_rect(BlitBuffer * restrict bb, unsigned int x, unsigned int y, unsigned int w, unsigned int h, const ColorRGB32 * restrict color);
 void BB_blend_RGB_multiply_rect(BlitBuffer * restrict bb, unsigned int x, unsigned int y, unsigned int w, unsigned int h, const ColorRGB24 * restrict color);
 void BB_blend_RGB32_multiply_rect(BlitBuffer * restrict bb, unsigned int x, unsigned int y, unsigned int w, unsigned int h, const ColorRGB32 * restrict color);
+void BB_saturate_rect(BlitBuffer * restrict bb, unsigned int x, unsigned int y, unsigned int w, unsigned int h, double saturation);
 void BB_invert_rect(BlitBuffer * restrict bb, unsigned int x, unsigned int y, unsigned int w, unsigned int h);
 void BB_hatch_rect(BlitBuffer * restrict bb, unsigned int x, unsigned int y, unsigned int w, unsigned int h, unsigned int stripe_width, const Color8 * restrict color, uint8_t alpha);
 void BB_blit_to(const BlitBuffer * restrict source, BlitBuffer * restrict dest, unsigned int dest_x, unsigned int dest_y,
@@ -746,6 +747,31 @@ else
     end
 end
 
+-- Exactly one of the pair is inverted (SW nightmode): a C copy then a C invert matches the Lua fallback.
+function BB_mt.__index:canUseCbbInverted(other)
+    if not use_cblitbuffer or self:getInverse() == other:getInverse() then
+        return false
+    end
+    local bbtype = self:getType()
+    return bbtype == other:getType() and (bbtype == TYPE_BB8 or bbtype == TYPE_BBRGB32)
+end
+
+-- Like BB_invert_rect, but also correct on padded rows and viewports, where a full-width rect isn't one contiguous block.
+function BB_mt.__index:invertRectCbb(x, y, w, h)
+    local px, py, pw, ph = self:getPhysicalRect(x, y, w, h)
+    local packed = self.pixel_stride == self.w and self.stride == self.w * self:getBytesPerPixel()
+    if px == 0 and pw == self.w and pw > 1 and not packed then
+        -- Two narrower rects, so BB_invert_rect goes row by row instead of in one run.
+        local rotation = self:getRotation()
+        self:setRotation(0)
+        cblitbuffer.BB_invert_rect(ffi.cast(P_BlitBuffer, self), 0, py, pw - 1, ph)
+        cblitbuffer.BB_invert_rect(ffi.cast(P_BlitBuffer, self), pw - 1, py, 1, ph)
+        self:setRotation(rotation)
+    else
+        cblitbuffer.BB_invert_rect(ffi.cast(P_BlitBuffer, self), x, y, w, h)
+    end
+end
+
 -- Bits per pixel
 function BB4_mt.__index:getBpp() return 4 end
 function BB8_mt.__index:getBpp() return 8 end
@@ -1256,6 +1282,32 @@ function BB8_mt.__index:blitTo8(dest, dest_x, dest_y, offs_x, offs_y, width, hei
         end
     end
 end
+function BBRGB24_mt.__index:blitToRGB24(dest, dest_x, dest_y, offs_x, offs_y, width, height, setter, set_param)
+    -- We can only do fast copy for simple blitting with no processing (setPixel, no rota, no invert)
+    if setter ~= self.setPixel or self:getRotation() ~= 0 or dest:getRotation() ~= 0 or (self:getInverse() ~= dest:getInverse()) then
+        return self:blitDefault(dest, dest_x, dest_y, offs_x, offs_y, width, height, setter, set_param)
+    end
+
+    -- Perform block copies only in the simple case of the blit width being equal to width of both buffers of same stride.
+    if offs_x == 0 and dest_x == 0 and width == self.w and width == dest.w and dest.stride == self.stride then
+        -- Single step for contiguous scanlines (on both sides)
+        -- BBRGB24 is 3 bytes per pixel
+        local srcp = ffi.cast(uint8pt_rodata, self.data) + self.stride*offs_y
+        local dstp = ffi.cast(uint8pt, dest.data) + dest.stride*dest_y
+        ffi.copy(dstp, srcp, width*3*height)
+    else
+        -- Scanline per scanline copy
+        local o_y = offs_y
+        local row_bytes = width * 3
+        for y = dest_y, dest_y+height-1 do
+            -- BBRGB24 is 3 bytes per pixel
+            local srcp = ffi.cast(uint8pt_rodata, self.data) + self.stride*o_y + offs_x*3
+            local dstp = ffi.cast(uint8pt, dest.data) + dest.stride*y + dest_x*3
+            ffi.copy(dstp, srcp, row_bytes)
+            o_y = o_y + 1
+        end
+    end
+end
 function BBRGB32_mt.__index:blitToRGB32(dest, dest_x, dest_y, offs_x, offs_y, width, height, setter, set_param)
     -- We can only do fast copy for simple blitting with no processing (setPixel, no rota, no invert)
     if setter ~= self.setPixel or self:getRotation() ~= 0 or dest:getRotation() ~= 0 or (self:getInverse() ~= dest:getInverse()) then
@@ -1298,6 +1350,11 @@ function BB_mt.__index:blitFrom(source, dest_x, dest_y, offs_x, offs_y, width, h
         cblitbuffer.BB_blit_to(ffi.cast(P_BlitBuffer_ROData, source),
             ffi.cast(P_BlitBuffer, self),
             dest_x, dest_y, offs_x, offs_y, width, height)
+    elseif setter == self.setPixel and self:canUseCbbInverted(source) then
+        cblitbuffer.BB_blit_to(ffi.cast(P_BlitBuffer_ROData, source),
+            ffi.cast(P_BlitBuffer, self),
+            dest_x, dest_y, offs_x, offs_y, width, height)
+        self:invertRectCbb(dest_x, dest_y, width, height)
     else
         source[self.blitfunc](source, self, dest_x, dest_y, offs_x, offs_y, width, height, setter, set_param)
     end
@@ -1664,6 +1721,39 @@ function BB4_mt.__index:invertRect(x, y, w, h)
     self:invertblitFrom(self, x, y, x, y, w, h)
 end
 
+function BB_mt.__index:adjustSaturation(saturation)
+    saturation = saturation or 1.0
+    if saturation == 1.0 then
+        return
+    end
+    saturation = math.max(0.0, math.min(saturation, 2.0))
+
+    local bbtype = self:getType()
+    if bbtype == TYPE_BB8 or bbtype == TYPE_BB8A or bbtype == TYPE_BB4 then
+        return
+    end
+
+    if self:canUseCbb() then
+        cblitbuffer.BB_saturate_rect(ffi.cast(P_BlitBuffer, self), 0, 0, self:getWidth(), self:getHeight(), saturation)
+        return
+    end
+
+    -- TODO: optimize this function
+    for y = 0, self:getHeight() - 1 do
+        for x = 0, self:getWidth() - 1 do
+            local color = self:getPixel(x, y):getColorRGB32()
+            local gray = rshift(4898 * color.r + 9618 * color.g + 1869 * color.b, 14)
+            local r = gray + (color.r - gray) * saturation
+            local g = gray + (color.g - gray) * saturation
+            local b = gray + (color.b - gray) * saturation
+            if r < 0 then r = 0 elseif r > 255 then r = 255 end
+            if g < 0 then g = 0 elseif g > 255 then g = 255 end
+            if b < 0 then b = 0 elseif b > 255 then b = 255 end
+            self:setPixel(x, y, ColorRGB32(r + 0.5, g + 0.5, b + 0.5, color.alpha))
+        end
+    end
+end
+
 --[[
 paint a rectangle onto this buffer
 
@@ -1933,7 +2023,7 @@ function BB_mt.__index:paintCircle(center_x, center_y, r, c, w)
     local r2 = r - w
     local x2 = 0
     local y2 = r2
-    local delta2 = 5/4 - r
+    local delta2 = 5/4 - r2
 
     -- draw two axles
     for tmp_y = r, r2+1, -1 do
@@ -2012,7 +2102,7 @@ function BB_mt.__index:paintRoundedCorner(off_x, off_y, w, h, bw, r, c, anti_ali
         local r2 = r - bw
         local x2 = 0
         local y2 = r2
-        local delta2 = 5/4 - r
+        local delta2 = 5/4 - r2
 
         while x < y do
             -- decrease y if we are out of circle
@@ -2368,8 +2458,9 @@ function BB4_mt.__index:writePNG(filename)
     local bbdump = BB.new(w, h, TYPE_BB8, nil, w, w)
     bbdump:blitFrom(self)
 
-    Png.encodeToFile(filename, ffi.cast(uint8pt_rodata, bbdump.data), w, h, 1)
+    local ok, err = Png.encodeToFile(filename, ffi.cast(uint8pt_rodata, bbdump.data), w, h, 1)
     bbdump:free()
+    return ok, err
 end
 
 function BB8_mt.__index:writePNG(filename)
@@ -2382,8 +2473,9 @@ function BB8_mt.__index:writePNG(filename)
     local bbdump = BB.new(w, h, TYPE_BB8, nil, w, w)
     bbdump:blitFrom(self)
 
-    Png.encodeToFile(filename, ffi.cast(uint8pt_rodata, bbdump.data), w, h, 1)
+    local ok, err = Png.encodeToFile(filename, ffi.cast(uint8pt_rodata, bbdump.data), w, h, 1)
     bbdump:free()
+    return ok, err
 end
 
 function BB8A_mt.__index:writePNG(filename)
@@ -2394,8 +2486,9 @@ function BB8A_mt.__index:writePNG(filename)
     local bbdump = BB.new(w, h, TYPE_BB8A, nil, w * 2, w)
     bbdump:blitFrom(self)
 
-    Png.encodeToFile(filename, ffi.cast(uint8pt_rodata, bbdump.data), w, h, 2)
+    local ok, err = Png.encodeToFile(filename, ffi.cast(uint8pt_rodata, bbdump.data), w, h, 2)
     bbdump:free()
+    return ok, err
 end
 
 function BBRGB16_mt.__index:writePNG(filename)
@@ -2406,8 +2499,9 @@ function BBRGB16_mt.__index:writePNG(filename)
     local bbdump = BB.new(w, h, TYPE_BBRGB24, nil, w * 3, w)
     bbdump:blitFrom(self)
 
-    Png.encodeToFile(filename, ffi.cast(uint8pt_rodata, bbdump.data), w, h, 3)
+    local ok, err = Png.encodeToFile(filename, ffi.cast(uint8pt_rodata, bbdump.data), w, h, 3)
     bbdump:free()
+    return ok, err
 end
 
 function BBRGB24_mt.__index:writePNG(filename, bgr)
@@ -2421,8 +2515,9 @@ function BBRGB24_mt.__index:writePNG(filename, bgr)
     local bbdump = BB.new(w, h, TYPE_BBRGB24, nil, w * 3, w)
     bbdump:blitFrom(self)
 
-    Png.encodeToFile(filename, ffi.cast(uint8pt_rodata, bbdump.data), w, h, 3)
+    local ok, err = Png.encodeToFile(filename, ffi.cast(uint8pt_rodata, bbdump.data), w, h, 3)
     bbdump:free()
+    return ok, err
 end
 
 function BBRGB32_mt.__index:writePNG(filename, bgr)
@@ -2436,8 +2531,9 @@ function BBRGB32_mt.__index:writePNG(filename, bgr)
     local bbdump = BB.new(w, h, TYPE_BBRGB32, nil, w * 4, w)
     bbdump:blitFrom(self)
 
-    Png.encodeToFile(filename, ffi.cast(uint8pt_rodata, bbdump.data), w, h, 4)
+    local ok, err = Png.encodeToFile(filename, ffi.cast(uint8pt_rodata, bbdump.data), w, h, 4)
     bbdump:free()
+    return ok, err
 end
 
 -- Crap manual fallback when a have a BGR <-> RGB swap to handle...
@@ -2458,35 +2554,46 @@ function BB_mt.__index:writePNGFromBGR(filename)
             offset = offset + 3
         end
     end
-    Png.encodeToFile(filename, ffi.cast(uint8pt_rodata, mem), w, h, 3)
+    local ok, err = Png.encodeToFile(filename, ffi.cast(uint8pt_rodata, mem), w, h, 3)
     C.free(cdata)
+    return ok, err
 end
 
 local Jpeg -- lazy load ffi/jpeg
 
 function BB_mt.__index:getBufferData()
-    local w, h = self:getWidth(), self:getHeight()
-    local bbdump, source_ptr, stride
-    if self:getType() == TYPE_BBRGB24 then
-        source_ptr = ffi.cast(uint8pt, self.data)
-        stride = self.stride
+    local n
+    local bbdump
+    local bbtype = self:getType()
+    if bbtype == TYPE_BBRGB32 then
+        bbdump = self
+        n = 4
+    elseif bbtype == TYPE_BBRGB24 then
+        bbdump = self
+        n = 3
     else
-        bbdump = BB.new(w, h, TYPE_BBRGB24, nil)
+        bbdump = BB.new(self.w, self.h, TYPE_BBRGB24, nil)
         bbdump:blitFrom(self)
-        source_ptr = ffi.cast(uint8pt, bbdump.data)
-        stride = bbdump.stride
+        n = 3
     end
-    return bbdump, source_ptr, w, stride, h
+    return bbdump, n
 end
 
 function BB_mt.__index:writeBMP(filename, grayscale)
     if not Jpeg then Jpeg = require("ffi/jpeg") end
 
-    local bbdump, source_ptr, w, stride, h = self:getBufferData()
+    local bbdump, n
+    if grayscale then
+        bbdump = BB.new(self.w, self.h, TYPE_BB8)
+        bbdump:blitFrom(self)
+        n = 1
+    else
+        bbdump, n = self:getBufferData()
+   end
 
-    Jpeg.writeBMP(filename, source_ptr, w, stride, h, grayscale)
+    Jpeg.writeBMP(filename, ffi.cast(uint8pt, bbdump.data), bbdump.w, bbdump.h, n, bbdump.stride)
 
-    if bbdump then
+    if bbdump ~= self then
         bbdump:free()
     end
 end
@@ -2494,11 +2601,11 @@ end
 function BB_mt.__index:writeJPG(filename, quality)
     if not Jpeg then Jpeg = require("ffi/jpeg") end
 
-    local bbdump, source_ptr, w, stride, h = self:getBufferData()
+    local bbdump, n = self:getBufferData()
 
-    Jpeg.encodeToFile(filename, source_ptr, w, stride, h, quality) -- Colortype default, subsample default
+    Jpeg.encodeToFile(filename, ffi.cast(uint8pt, bbdump.data), bbdump.w, bbdump.h, n, quality, bbdump.stride)
 
-    if bbdump then
+    if bbdump ~= self then
         bbdump:free()
     end
 end

@@ -1,7 +1,6 @@
 list(APPEND PATCH_FILES
     cmake_tweaks.patch
     no_messing_with_debug_flags.patch
-    k2pdfopt.patch
 )
 # Make sure we use the old fmemopen symbol on ARM Linux when building against
 # glibc >= 2.22 (c.f. base#421 & #2188).
@@ -57,8 +56,8 @@ endif()
 external_project(
     # NOTE: Needs to match the version used by whatever version of libk2pdfopt we're currently using...
     #       Probably applies to mupdf & tesseract, too...
-    DOWNLOAD URL d523d2c883b71850a46af2517d8915bf
-    https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
+    DOWNLOAD URL 1f66c425c270e9793982289e1ff9634a
+    https://github.com/DanBloomberg/leptonica/archive/refs/tags/1.87.0.tar.gz
     PATCH_FILES ${PATCH_FILES}
     CMAKE_ARGS ${CMAKE_ARGS}
     BUILD_COMMAND ${BUILD_CMD}

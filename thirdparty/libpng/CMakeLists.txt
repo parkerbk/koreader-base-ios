@@ -9,9 +9,8 @@ list(APPEND CMAKE_ARGS
     -DPNG_TESTS=FALSE
     -DPNG_TOOLS=FALSE
 )
-# Rely on `-mfpu=neon` ifdefs for enabling NEON on 32bits ARM.
-if(CMAKE_SYSTEM_PROCESSOR STREQUAL "arm")
-    list(APPEND CMAKE_ARGS -DPNG_ARM_NEON=on)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|aarch)")
+    list(APPEND CMAKE_ARGS -DPNG_ARM_NEON=$<IF:$<BOOL:${WANT_SIMD}>,on,off>)
 endif()
 
 list(APPEND BUILD_CMD COMMAND ninja)
@@ -23,8 +22,8 @@ if(NOT MONOLIBTIC)
 endif()
 
 external_project(
-    DOWNLOAD URL 92972b05f1895240139f749ff24afce8
-    https://github.com/pnggroup/libpng/archive/refs/tags/v1.6.58.tar.gz
+    DOWNLOAD URL f6ebbce5d235295002d739ab57daeaaa
+    https://github.com/pnggroup/libpng/archive/refs/tags/v1.6.59.tar.gz
     CMAKE_ARGS ${CMAKE_ARGS}
     BUILD_COMMAND ${BUILD_CMD}
     INSTALL_COMMAND ${INSTALL_CMD}

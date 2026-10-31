@@ -1,20 +1,24 @@
 -- Automatically generated with ffi-cdecl.
 
-local ffi = require("ffi")
-
-ffi.cdef[[
+require("ffi").cdef[[
 typedef struct {
-  float x0;
-  float y0;
-  float x1;
-  float y1;
+  float x0, y0;
+  float x1, y1;
 } BBox;
 typedef struct Boxa BOXA;
+typedef struct {
+  int row;
+  int col;
+  int type;
+} K2PAGEBREAKMARK;
+typedef struct {
+  int n;
+  K2PAGEBREAKMARK k2pagebreakmark[32];
+} K2PAGEBREAKMARKS;
 typedef struct Numa NUMA;
 typedef struct Pix PIX;
 typedef struct {
-  double x;
-  double y;
+  double x, y;
 } POINT2D;
 typedef struct {
   int srcpageno;
@@ -27,13 +31,12 @@ typedef struct {
 } WRECTMAP;
 typedef struct {
   WRECTMAP *wrectmap;
-  int n;
-  int na;
+  int n, na;
 } WRECTMAPS;
 typedef struct {
-  int red[256];
-  int green[256];
-  int blue[256];
+  unsigned char red[256];
+  unsigned char green[256];
+  unsigned char blue[256];
   unsigned char *data;
   int width;
   int height;
@@ -48,10 +51,8 @@ typedef struct {
   int r2;
 } HYPHENINFO;
 typedef struct {
-  int c1;
-  int c2;
-  int r1;
-  int r2;
+  int c1, c2;
+  int r1, r2;
   int rowbase;
   int gap;
   int gapblank;
@@ -65,25 +66,15 @@ typedef struct {
 } TEXTROW;
 typedef struct {
   TEXTROW *textrow;
-  int n;
-  int na;
+  int n, na;
 } TEXTROWS;
 typedef struct {
-  int r1;
-  int r2;
-  int c1;
-  int c2;
+  int r1, r2;
+  int c1, c2;
   TEXTROWS textrows;
   TEXTROW bbox;
   WRECTMAPS *wrectmaps;
-  struct {
-    int n;
-    struct {
-      int row;
-      int col;
-      int type;
-    } k2pagebreakmark[32];
-  } *k2pagebreakmarks;
+  K2PAGEBREAKMARKS *k2pagebreakmarks;
   int k2pagebreakmarks_allocated;
   int bgcolor;
   int dpi;
@@ -103,13 +94,13 @@ typedef struct {
 } PAGEREGION;
 typedef struct {
   PAGEREGION *pageregion;
-  int n;
-  int na;
+  int n, na;
 } PAGEREGIONS;
 struct KOPTContext {
   int trim;
   int wrap;
-  int white;
+  int white_threshold;
+  int paint_white_threshold;
   int indent;
   int rotate;
   int columns;

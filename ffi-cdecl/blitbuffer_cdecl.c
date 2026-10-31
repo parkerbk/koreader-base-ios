@@ -1,5 +1,4 @@
 #include "blitbuffer.h"
-#include "ffi-cdecl.h"
 
 /* cdecl_type(Color4L) */
 /* cdecl_struct(Color4L) */
@@ -37,6 +36,7 @@ cdecl_func(BB_blend_rect)
 cdecl_func(BB_blend_RGB32_over_rect)
 cdecl_func(BB_blend_RGB_multiply_rect)
 cdecl_func(BB_blend_RGB32_multiply_rect)
+cdecl_func(BB_saturate_rect)
 cdecl_func(BB_blit_to)
 cdecl_func(BB_color_blit_from)
 cdecl_func(BB_color_blit_from_RGB32)

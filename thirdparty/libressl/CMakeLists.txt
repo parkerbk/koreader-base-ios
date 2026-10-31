@@ -11,6 +11,10 @@ list(APPEND CMAKE_ARGS
     -DLIBRESSL_TESTS=OFF
     -DENABLE_ASM=${WANT_SIMD}
 )
+if(GLIBC_VERSION_MAX AND GLIBC_VERSION_MAX VERSION_LESS "2.8")
+    # Avoid pulling-in `__asprintf_chk@GLIBC_2.8` and `__vasprintf_chk@GLIBC_2.8`.
+    list(APPEND CMAKE_ARGS -DHAVE_ASPRINTF=FALSE)
+endif()
 
 list(APPEND BUILD_CMD COMMAND ninja)
 
@@ -22,9 +26,10 @@ if(NOT MONOLIBTIC)
 endif()
 
 external_project(
-    DOWNLOAD URL 888de2b4f668651f1fe19d9e0340dd57
-    https://cdn.openbsd.org/pub/OpenBSD/LibreSSL/libressl-4.3.1.tar.gz
-    https://cloudflare.cdn.openbsd.org/pub/OpenBSD/LibreSSL/libressl-4.3.1.tar.gz
+    DOWNLOAD URL ed2f4274ed8f2733ab257f0fe97aedaf
+    https://github.com/libressl/portable/releases/download/v4.4.0/libressl-4.4.0.tar.gz
+    https://cloudflare.cdn.openbsd.org/pub/OpenBSD/LibreSSL/libressl-4.4.0.tar.gz
+    https://cdn.openbsd.org/pub/OpenBSD/LibreSSL/libressl-4.4.0.tar.gz
     PATCH_FILES ${PATCH_FILES}
     CMAKE_ARGS ${CMAKE_ARGS}
     BUILD_COMMAND ${BUILD_CMD}

@@ -1,34 +1,34 @@
 -- Automatically generated with ffi-cdecl.
 
-local ffi = require("ffi")
+require "ffi/posix_h"
 
-ffi.cdef[[
+require("ffi").cdef[[
 typedef int64_t la_int64_t;
 typedef ssize_t la_ssize_t;
-static const int AE_IFREG = 32768;
-static const int AE_IFLNK = 40960;
-static const int AE_IFSOCK = 49152;
-static const int AE_IFCHR = 8192;
-static const int AE_IFBLK = 24576;
-static const int AE_IFDIR = 16384;
-static const int AE_IFIFO = 4096;
-static const int ARCHIVE_EOF = 1;
+static const unsigned AE_IFREG = 32768;
+static const unsigned AE_IFLNK = 40960;
+static const unsigned AE_IFSOCK = 49152;
+static const unsigned AE_IFCHR = 8192;
+static const unsigned AE_IFBLK = 24576;
+static const unsigned AE_IFDIR = 16384;
+static const unsigned AE_IFIFO = 4096;
+static const unsigned ARCHIVE_EOF = 1;
 static const int ARCHIVE_FAILED = -25;
-static const int ARCHIVE_OK = 0;
-static const int ARCHIVE_EXTRACT_SECURE_NODOTDOT = 512;
-static const int ARCHIVE_EXTRACT_SECURE_SYMLINKS = 256;
-static const int ARCHIVE_READDISK_NO_ACL = 32;
-static const int ARCHIVE_READDISK_NO_FFLAGS = 64;
-static const int ARCHIVE_READDISK_NO_SPARSE = 128;
-static const int ARCHIVE_READDISK_NO_TRAVERSE_MOUNTS = 8;
-static const int ARCHIVE_READDISK_NO_XATTR = 16;
+static const unsigned ARCHIVE_OK = 0;
+static const unsigned ARCHIVE_EXTRACT_SECURE_NODOTDOT = 512;
+static const unsigned ARCHIVE_EXTRACT_SECURE_SYMLINKS = 256;
+static const unsigned ARCHIVE_READDISK_NO_ACL = 32;
+static const unsigned ARCHIVE_READDISK_NO_FFLAGS = 64;
+static const unsigned ARCHIVE_READDISK_NO_SPARSE = 128;
+static const unsigned ARCHIVE_READDISK_NO_TRAVERSE_MOUNTS = 8;
+static const unsigned ARCHIVE_READDISK_NO_XATTR = 16;
 int archive_entry_filetype(struct archive_entry *);
 void archive_entry_free(struct archive_entry *);
 struct archive_entry *archive_entry_new(void);
 const char *archive_entry_pathname(struct archive_entry *);
-void archive_entry_set_filetype(struct archive_entry *, unsigned int);
+void archive_entry_set_filetype(struct archive_entry *, unsigned);
 void archive_entry_set_gid(struct archive_entry *, la_int64_t);
-void archive_entry_set_mtime(struct archive_entry *, long int, long int);
+void archive_entry_set_mtime(struct archive_entry *, time_t, long);
 void archive_entry_set_pathname(struct archive_entry *, const char *);
 void archive_entry_set_perm(struct archive_entry *, int);
 void archive_entry_set_size(struct archive_entry *, la_int64_t);

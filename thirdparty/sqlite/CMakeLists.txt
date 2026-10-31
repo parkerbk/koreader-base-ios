@@ -12,10 +12,10 @@ if(NOT MONOLIBTIC)
 endif()
 
 external_project(
-    DOWNLOAD URL a7df784a8d797f6378da34b5b7847b1e
-    https://www.sqlite.org/2026/sqlite-amalgamation-3530000.zip
-    https://www2.sqlite.org/2026/sqlite-amalgamation-3530000.zip
-    https://www3.sqlite.org/2026/sqlite-amalgamation-3530000.zip
+    DOWNLOAD URL 44b55a31f2d928521787bc48c6087937
+    https://www.sqlite.org/2026/sqlite-amalgamation-3540100.zip
+    https://www2.sqlite.org/2026/sqlite-amalgamation-3540100.zip
+    https://www3.sqlite.org/2026/sqlite-amalgamation-3540100.zip
     PATCH_OVERLAY overlay
     CMAKE_ARGS ${CMAKE_ARGS}
     BUILD_COMMAND ${BUILD_CMD}

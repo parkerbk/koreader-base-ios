@@ -214,6 +214,9 @@ static int setColorRendering(lua_State *L) {
 		doc->pixelsize = 1;
 		doc->pixelformat = ddjvu_format_create(DDJVU_FORMAT_GREY8, 0, NULL);
 	}
+	if (! doc->pixelformat) {
+		return luaL_error(L, "cannot create DjVu pixelformat");
+	}
 	ddjvu_format_set_row_order(doc->pixelformat, 1);
 	ddjvu_format_set_y_direction(doc->pixelformat, 1);
 	return 0;
@@ -372,6 +375,9 @@ static int getUsedBBox(lua_State *L) {
 static int getOriginalPageSize(lua_State *L) {
 	DjvuDocument *doc = (DjvuDocument*) luaL_checkudata(L, 1, "djvudocument");
 	int pageno = luaL_checkint(L, 2);
+	if (pageno < 1 || pageno > ddjvu_document_get_pagenum(doc->doc_ref)) {
+		return luaL_error(L, "page #%d out of range (1-%d)", pageno, ddjvu_document_get_pagenum(doc->doc_ref));
+	}
 
 	ddjvu_status_t r;
 	ddjvu_pageinfo_t info;
@@ -380,6 +386,8 @@ static int getOriginalPageSize(lua_State *L) {
 				   doc->doc_ref, pageno-1, &info))<DDJVU_JOB_OK) {
 		handle(L, doc->context, TRUE);
 	}
+	if (r>=DDJVU_JOB_FAILED)
+		return luaL_error(L, "cannot get page #%d information", pageno);
 
 	lua_pushinteger(L, info.width);
 	lua_pushinteger(L, info.height);
@@ -493,6 +501,9 @@ void lua_settable_djvu_anno(lua_State *L, miniexp_t anno, int yheight) {
 static int getPageText(lua_State *L) {
 	DjvuDocument *doc = (DjvuDocument*) luaL_checkudata(L, 1, "djvudocument");
 	int pageno = luaL_checkint(L, 2);
+	if (pageno < 1 || pageno > ddjvu_document_get_pagenum(doc->doc_ref)) {
+		return luaL_error(L, "page #%d out of range (1-%d)", pageno, ddjvu_document_get_pagenum(doc->doc_ref));
+	}
 	lua_settop(L, 0); // Pop function args
 
 	/* get page height for coordinates transform */
@@ -569,6 +580,9 @@ static int getPagePix(lua_State *L) {
 	dst->height = rrect.h;
 	dst->bpp = 8*page->doc->pixelsize;
 	bmp_alloc(dst);
+	if (!dst->data) {
+		return luaL_error(L, "cannot allocate bitmap for page %d", page->num);
+	}
 	if (dst->bpp == 8) {
 		int ii;
 		for (ii = 0; ii < 256; ii++)
@@ -649,6 +663,10 @@ static int drawPage(lua_State *L) {
 	if (!ddjvu_page_render(page->page_ref, djvu_render_mode, &pagerect, &renderrect, page->doc->pixelformat, bb->w*page->doc->pixelsize, (void *)imagebuffer)) {
 		// Clear to white on failure
 		memset(imagebuffer, 0xFF, bbsize);
+	}
+
+	if (page->doc->pixelsize == 3 && dc->saturation != 1.0) {
+		BB_saturate_rect(bb, 0, 0, bb->w, bb->h, dc->saturation);
 	}
 
 	return 0;

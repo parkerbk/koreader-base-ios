@@ -3,8 +3,6 @@
 #include "include/mxcfb-kobo.h"
 #include "include/mtk-kobo.h"
 
-#include "ffi-cdecl.h"
-
 cdecl_const(UPDATE_MODE_PARTIAL)
 cdecl_const(UPDATE_MODE_FULL)
 
@@ -44,7 +42,7 @@ cdecl_struct(mxcfb_update_data_v1_ntx)
 
 cdecl_struct(mxcfb_alt_buffer_data)
 cdecl_struct(mxcfb_update_data_v1)		// Aura
-cdecl_struct(mxcfb_update_data_v2)		// Mark 7
+cdecl_struct(mxcfb_update_data)			// Mark 7
 
 cdecl_struct(mxcfb_update_marker_data)		// Mark 7
 

@@ -1,3 +1,8 @@
+list(APPEND PATCH_FILES
+    # Disable AES via ACE code (deemed unmaintainable, disabled, and later removed upstream).
+    no_aes_ace.patch
+)
+
 list(APPEND CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE})
 
 list(APPEND BUILD_CMD COMMAND ninja)
@@ -12,8 +17,9 @@ external_project(
     # FIXME: Even then, something in said branch seems to upset MuPDF
     # with our custom patch as-is, so keep using the current code...
     DOWNLOAD GIT aa4758baea16e9dc03583340e62b370ea1140df9
-    https://github.com/nmoinvaz/minizip
+    https://github.com/zlib-ng/minizip-ng
     PATCH_OVERLAY overlay
+    PATCH_FILES ${PATCH_FILES}
     CMAKE_ARGS ${CMAKE_ARGS}
     BUILD_COMMAND ${BUILD_CMD}
     INSTALL_COMMAND ${INSTALL_CMD}

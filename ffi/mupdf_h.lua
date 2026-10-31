@@ -1,57 +1,41 @@
 -- Automatically generated with ffi-cdecl.
 
-local ffi = require("ffi")
-
-ffi.cdef[[
-static const int FZ_STEXT_BLOCK_TEXT = 0;
+require("ffi").cdef[[
+static const unsigned FZ_STEXT_BLOCK_TEXT = 0;
 typedef struct {
-  float x;
-  float y;
+  float x, y;
 } fz_point;
 typedef struct {
-  fz_point ul;
-  fz_point ur;
-  fz_point ll;
-  fz_point lr;
+  fz_point ul, ur, ll, lr;
 } fz_quad;
 typedef struct {
-  float x0;
-  float y0;
-  float x1;
-  float y1;
+  float x0, y0;
+  float x1, y1;
 } fz_rect;
 typedef struct {
-  int x0;
-  int y0;
-  int x1;
-  int y1;
+  int x0, y0;
+  int x1, y1;
 } fz_irect;
 typedef struct {
-  float a;
-  float b;
-  float c;
-  float d;
-  float e;
-  float f;
+  float a, b, c, d, e, f;
 } fz_matrix;
-extern const fz_matrix fz_identity;
-extern const fz_rect fz_empty_rect;
+const fz_matrix fz_identity;
+const fz_rect fz_empty_rect;
 typedef struct fz_context fz_context;
 typedef struct fz_font fz_font;
 void fz_install_external_font_funcs(fz_context *);
 typedef struct fz_archive fz_archive;
 fz_archive *mupdf_open_directory(fz_context *, const char *);
-void *mupdf_drop_archive(fz_context *, fz_archive *);
+void fz_drop_archive(fz_context *, fz_archive *);
 typedef struct {
   int refs;
   unsigned char *data;
-  size_t cap;
-  size_t len;
+  size_t cap, len;
   int unused_bits;
   int shared;
 } fz_buffer;
 fz_buffer *mupdf_new_buffer_from_shared_data(fz_context *, const unsigned char *, size_t);
-void *mupdf_drop_buffer(fz_context *, fz_buffer *);
+void fz_drop_buffer(fz_context *, fz_buffer *);
 typedef struct {
   void *user;
   void *(*malloc)(void *, size_t);
@@ -86,15 +70,14 @@ struct fz_outline {
   char *title;
   char *uri;
   fz_location page;
-  float x;
-  float y;
+  float x, y;
   struct fz_outline *next;
   struct fz_outline *down;
-  unsigned int is_open : 1;
-  unsigned int flags : 7;
-  unsigned char r;
-  unsigned char g;
-  unsigned char b;
+  unsigned is_open:1;
+  unsigned flags:7;
+  unsigned r:8;
+  unsigned g:8;
+  unsigned b:8;
 };
 typedef struct {
   int abort;
@@ -114,29 +97,31 @@ int fz_needs_password(fz_context *, fz_document *);
 int fz_authenticate_password(fz_context *, fz_document *, const char *);
 void fz_drop_document(fz_context *, fz_document *);
 int mupdf_count_pages(fz_context *, fz_document *);
-void *mupdf_layout_document(fz_context *, fz_document *, float, float, float);
+bool mupdf_layout_document(fz_context *, fz_document *, float, float, float);
 int fz_lookup_metadata(fz_context *, fz_document *, const char *, char *, size_t);
 fz_page *mupdf_load_page(fz_context *, fz_document *, int);
 fz_rect *mupdf_fz_bound_page(fz_context *, fz_page *, fz_rect *);
 void fz_drop_page(fz_context *, fz_page *);
 typedef struct fz_link fz_link;
+typedef void (fz_link_drop_link_fn)(fz_context *, fz_link *);
+typedef void (fz_link_set_rect_fn)(fz_context *, fz_link *, fz_rect);
+typedef void (fz_link_set_uri_fn)(fz_context *, fz_link *, const char *);
 struct fz_link {
   int refs;
   struct fz_link *next;
   fz_rect rect;
   char *uri;
-  void (*set_rect_fn)(fz_context *, fz_link *, fz_rect);
-  void (*set_uri_fn)(fz_context *, fz_link *, const char *);
-  void (*drop)(fz_context *, fz_link *);
+  fz_link_set_rect_fn *set_rect_fn;
+  fz_link_set_uri_fn *set_uri_fn;
+  fz_link_drop_link_fn *drop;
 };
 fz_link *mupdf_load_links(fz_context *, fz_page *);
 fz_location *mupdf_fz_resolve_link(fz_context *, fz_document *, const char *, float *, float *, fz_location *);
 void fz_drop_link(fz_context *, fz_link *);
 int mupdf_fz_page_number_from_location(fz_context *, fz_document *, fz_location *);
-void *mupdf_fz_location_from_page_number(fz_context *, fz_document *, fz_location *, int);
 fz_outline *mupdf_load_outline(fz_context *, fz_document *);
 void fz_drop_outline(fz_context *, fz_outline *);
-void *mupdf_drop_stream(fz_context *, fz_stream *);
+void fz_drop_stream(fz_context *, fz_stream *);
 fz_stream *mupdf_open_memory(fz_context *, const unsigned char *, size_t);
 typedef struct fz_stext_char fz_stext_char;
 struct fz_stext_char {
@@ -150,16 +135,25 @@ struct fz_stext_char {
   fz_font *font;
   fz_stext_char *next;
 };
+typedef struct fz_pool fz_pool;
+typedef struct fz_pool_array fz_pool_array;
+typedef struct {
+  int w;
+  int h;
+  struct {
+    unsigned flags;
+  } info[];
+} fz_stext_grid_info;
+typedef struct fz_stext_grid_positions fz_stext_grid_positions;
+typedef struct fz_stext_struct fz_stext_struct;
 typedef struct fz_stext_line fz_stext_line;
 struct fz_stext_line {
   uint8_t wmode;
   uint8_t flags;
   fz_point dir;
   fz_rect bbox;
-  fz_stext_char *first_char;
-  fz_stext_char *last_char;
-  fz_stext_line *prev;
-  fz_stext_line *next;
+  fz_stext_char *first_char, *last_char;
+  fz_stext_line *prev, *next;
 };
 typedef struct fz_stext_block fz_stext_block;
 struct fz_stext_block {
@@ -168,8 +162,7 @@ struct fz_stext_block {
   fz_rect bbox;
   union {
     struct {
-      fz_stext_line *first_line;
-      fz_stext_line *last_line;
+      fz_stext_line *first_line, *last_line;
       int flags;
     } t;
     struct {
@@ -177,7 +170,7 @@ struct fz_stext_block {
       fz_image *image;
     } i;
     struct {
-      struct fz_stext_struct *down;
+      fz_stext_struct *down;
       int index;
     } s;
     struct {
@@ -185,19 +178,12 @@ struct fz_stext_block {
       uint32_t argb;
     } v;
     struct {
-      struct fz_stext_grid_positions *xs;
-      struct fz_stext_grid_positions *ys;
-      struct {
-        int w;
-        int h;
-        struct {
-          unsigned int flags;
-        } info[];
-      } *info;
+      fz_stext_grid_positions *xs;
+      fz_stext_grid_positions *ys;
+      fz_stext_grid_info *info;
     } b;
   } u;
-  fz_stext_block *prev;
-  fz_stext_block *next;
+  fz_stext_block *prev, *next;
 };
 typedef struct {
   int flags;
@@ -206,12 +192,12 @@ typedef struct {
 } fz_stext_options;
 typedef struct {
   int refs;
-  struct fz_pool *pool;
+  fz_pool *pool;
   fz_rect mediabox;
   fz_stext_block *first_block;
   fz_stext_block *last_block;
-  struct fz_stext_struct *last_struct;
-  struct fz_pool_array *id_list;
+  fz_stext_struct *last_struct;
+  fz_pool_array *id_list;
 } fz_stext_page;
 fz_stext_page *mupdf_new_stext_page_from_page(fz_context *, fz_page *, const fz_stext_options *);
 int mupdf_search_stext_page(fz_context *, fz_stext_page *, const char *, int *, fz_quad *, int);
@@ -229,7 +215,7 @@ typedef struct {
   fz_colorspace *cmyk;
   fz_colorspace *oi;
 } fz_default_colorspaces;
-extern const fz_color_params fz_default_color_params;
+const fz_color_params fz_default_color_params;
 fz_pixmap *fz_new_pixmap(fz_context *, fz_colorspace *, int, int, fz_separations *, int);
 fz_pixmap *mupdf_new_pixmap_with_bbox(fz_context *, fz_colorspace *, const fz_irect *, fz_separations *, int);
 fz_pixmap *mupdf_new_pixmap_with_data(fz_context *, fz_colorspace *, int, int, fz_separations *, int, int, unsigned char *);
@@ -248,38 +234,40 @@ fz_colorspace *fz_device_rgb(fz_context *);
 fz_colorspace *fz_device_bgr(fz_context *);
 fz_device *mupdf_new_draw_device(fz_context *, const fz_matrix *, fz_pixmap *);
 fz_device *mupdf_new_bbox_device(fz_context *, fz_rect *);
-void *mupdf_run_page(fz_context *, fz_page *, fz_device *, const fz_matrix *, fz_cookie *);
-void fz_close_device(fz_context *, fz_device *);
+fz_device *mupdf_new_transparency_mask_device(fz_context *, fz_device *);
+int mupdf_page_has_transparency_mask(fz_context *, fz_page *);
+bool mupdf_run_page(fz_context *, fz_page *, fz_device *, const fz_matrix *, fz_cookie *);
+bool mupdf_close_device(fz_context *, fz_device *);
 void fz_drop_device(fz_context *, fz_device *);
 enum pdf_annot_type {
-  PDF_ANNOT_TEXT = 0,
-  PDF_ANNOT_LINK = 1,
-  PDF_ANNOT_FREE_TEXT = 2,
-  PDF_ANNOT_LINE = 3,
-  PDF_ANNOT_SQUARE = 4,
-  PDF_ANNOT_CIRCLE = 5,
-  PDF_ANNOT_POLYGON = 6,
-  PDF_ANNOT_POLY_LINE = 7,
-  PDF_ANNOT_HIGHLIGHT = 8,
-  PDF_ANNOT_UNDERLINE = 9,
-  PDF_ANNOT_SQUIGGLY = 10,
-  PDF_ANNOT_STRIKE_OUT = 11,
-  PDF_ANNOT_REDACT = 12,
-  PDF_ANNOT_STAMP = 13,
-  PDF_ANNOT_CARET = 14,
-  PDF_ANNOT_INK = 15,
-  PDF_ANNOT_POPUP = 16,
-  PDF_ANNOT_FILE_ATTACHMENT = 17,
-  PDF_ANNOT_SOUND = 18,
-  PDF_ANNOT_MOVIE = 19,
-  PDF_ANNOT_RICH_MEDIA = 20,
-  PDF_ANNOT_WIDGET = 21,
-  PDF_ANNOT_SCREEN = 22,
-  PDF_ANNOT_PRINTER_MARK = 23,
-  PDF_ANNOT_TRAP_NET = 24,
-  PDF_ANNOT_WATERMARK = 25,
-  PDF_ANNOT_3D = 26,
-  PDF_ANNOT_PROJECTION = 27,
+  PDF_ANNOT_TEXT,
+  PDF_ANNOT_LINK,
+  PDF_ANNOT_FREE_TEXT,
+  PDF_ANNOT_LINE,
+  PDF_ANNOT_SQUARE,
+  PDF_ANNOT_CIRCLE,
+  PDF_ANNOT_POLYGON,
+  PDF_ANNOT_POLY_LINE,
+  PDF_ANNOT_HIGHLIGHT,
+  PDF_ANNOT_UNDERLINE,
+  PDF_ANNOT_SQUIGGLY,
+  PDF_ANNOT_STRIKE_OUT,
+  PDF_ANNOT_REDACT,
+  PDF_ANNOT_STAMP,
+  PDF_ANNOT_CARET,
+  PDF_ANNOT_INK,
+  PDF_ANNOT_POPUP,
+  PDF_ANNOT_FILE_ATTACHMENT,
+  PDF_ANNOT_SOUND,
+  PDF_ANNOT_MOVIE,
+  PDF_ANNOT_RICH_MEDIA,
+  PDF_ANNOT_WIDGET,
+  PDF_ANNOT_SCREEN,
+  PDF_ANNOT_PRINTER_MARK,
+  PDF_ANNOT_TRAP_NET,
+  PDF_ANNOT_WATERMARK,
+  PDF_ANNOT_3D,
+  PDF_ANNOT_PROJECTION,
   PDF_ANNOT_UNKNOWN = -1,
 };
 typedef struct pdf_annot pdf_annot;
@@ -288,15 +276,18 @@ typedef struct pdf_document pdf_document;
 int mupdf_pdf_annot_type(fz_context *, pdf_annot *);
 const char *mupdf_pdf_annot_contents(fz_context *, pdf_annot *);
 pdf_annot *mupdf_pdf_create_annot(fz_context *, pdf_page *, enum pdf_annot_type);
-void *mupdf_pdf_delete_annot(fz_context *, pdf_page *, pdf_annot *);
-void *mupdf_pdf_set_annot_quad_points(fz_context *, pdf_annot *, int, const fz_quad *);
-void *mupdf_pdf_set_annot_contents(fz_context *, pdf_annot *, const char *);
-void *mupdf_pdf_set_annot_color(fz_context *, pdf_annot *, int, const float *);
-void *mupdf_pdf_set_annot_opacity(fz_context *, pdf_annot *, float);
+bool mupdf_pdf_delete_annot(fz_context *, pdf_page *, pdf_annot *);
+bool mupdf_pdf_set_annot_quad_points(fz_context *, pdf_annot *, int, const fz_quad *);
+bool mupdf_pdf_set_annot_contents(fz_context *, pdf_annot *, const char *);
+bool mupdf_pdf_set_annot_color(fz_context *, pdf_annot *, int, const float[4]);
+bool mupdf_pdf_set_annot_opacity(fz_context *, pdf_annot *, float);
+bool mupdf_pdf_set_annot_ink_list(fz_context *, pdf_annot *, int, const int *, const fz_point *);
+bool mupdf_pdf_set_annot_border_width(fz_context *, pdf_annot *, float);
+bool mupdf_pdf_update_annot(fz_context *, pdf_annot *);
 pdf_annot *mupdf_pdf_first_annot(fz_context *, pdf_page *);
 pdf_annot *mupdf_pdf_next_annot(fz_context *, pdf_annot *);
 int mupdf_pdf_annot_quad_point_count(fz_context *, pdf_annot *);
-void *mupdf_pdf_annot_quad_point(fz_context *, pdf_annot *, int, fz_quad *);
+bool mupdf_pdf_annot_quad_point(fz_context *, pdf_annot *, int, fz_quad *);
 typedef struct {
   int do_incremental;
   int do_pretty;
@@ -321,7 +312,7 @@ typedef struct {
   int compression_effort;
   int do_labels;
 } pdf_write_options;
-void *mupdf_pdf_save_document(fz_context *, pdf_document *, const char *, pdf_write_options *);
+bool mupdf_pdf_save_document(fz_context *, pdf_document *, const char *, pdf_write_options *);
 fz_alloc_context *mupdf_get_my_alloc_context();
 int mupdf_get_cache_size();
 int mupdf_error_code(fz_context *);

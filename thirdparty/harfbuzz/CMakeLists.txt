@@ -31,11 +31,15 @@ set(DEFINES
     HB_DISABLE_DEPRECATED
     HB_NO_BUFFER_MESSAGE
     HB_NO_BUFFER_SERIALIZE
+    HB_NO_BUFFER_VERIFY
     HB_NO_COLOR
     HB_NO_LAYOUT_COLLECT_GLYPHS
+    HB_NO_LAYOUT_FEATURE_PARAMS
     HB_NO_LAYOUT_RARELY_USED
     HB_NO_LAYOUT_UNUSED
     HB_NO_META
+    HB_NO_OT_FETCH
+    HB_NO_OT_FONT_GLYPH_NAMES
     HB_NO_PAINT
     HB_NO_STYLE
     HB_NO_VAR_COMPOSITES
@@ -64,8 +68,8 @@ if(NOT MONOLIBTIC)
 endif()
 
 external_project(
-    DOWNLOAD URL da27771546eb196b8bec6703d81b12b7
-    https://github.com/harfbuzz/harfbuzz/releases/download/14.1.0/harfbuzz-14.1.0.tar.xz
+    DOWNLOAD URL f026f630bfebcc708775bbd2c478bba6
+    https://github.com/harfbuzz/harfbuzz/releases/download/14.5.1/harfbuzz-14.5.1.tar.xz
     PATCH_FILES ${PATCH_FILES}
     PATCH_COMMAND ${PATCH_CMD}
     CONFIGURE_COMMAND ${CFG_CMD}

@@ -18,7 +18,8 @@ ABI compatibility).
 
 local ffi = require("ffi")
 local android = ffi.os == "Linux" and os.getenv("IS_ANDROID") and require("android")
-local log = android and android.LOGI or print
+-- NOTE: the `ffi.log` override is used by some tools to silence loadlib's traces.
+local log = ffi.log or android and android.LOGI or print
 
 local monolibtic = {
     path = (android and android.nativeLibraryDir or "libs") .. "/libkoreader-monolibtic." .. (ffi.os == "OSX" and "dylib" or "so"),
@@ -39,6 +40,7 @@ local monolibtic = {
         ["png16"]      = true,
         ["sharpyuv"]   = true,
         ["sqlite3"]    = true,
+        ["ssl"]        = true,
         ["tffi_wrap"]  = true,
         ["turbojpeg"]  = true,
         ["unibreak"]   = true,
@@ -111,8 +113,27 @@ Load a native library.
 @param ... list of candidates (library name, version)
 --]]
 ffi.loadlib = function(...)
-    local lib = findlib(...) or libname(...)
-    return ffi.load(lib)
+    local lib = findlib(...)
+    if lib then
+        return ffi.load(lib)
+    end
+    -- Fallback to trying to `ffi.load` each candidate.
+    local errlist = {}
+    local n = 1
+    while true do
+        local name, version = select(n, ...)
+        if not name then
+            break
+        end
+        name = libname(name, version)
+        local ok, err = pcall(ffi.load, name)
+        if ok then
+            return err
+        end
+        table.insert(errlist, err)
+        n = n + 2
+    end
+    error(table.concat(errlist, ", "))
 end
 
 if android then

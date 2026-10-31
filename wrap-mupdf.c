@@ -22,6 +22,7 @@
 #include <math.h>
 #include <stddef.h>
 #include <string.h>
+#include <stdint.h>
 #include "wrap-mupdf.h"
 
 static double LOG_TRESHOLD_PERC = 0.05; // 5%
@@ -75,6 +76,9 @@ static void log_size(char *funcName) {
 static void *
 my_malloc_default(void *opaque, size_t size)
 {
+    if (size > SIZE_MAX - sizeof(header)) {
+        return NULL;
+    }
     struct header * h = malloc(size + sizeof(header));
     if (h == NULL) {
         return NULL;
@@ -201,6 +205,65 @@ fz_rect *mupdf_fz_rect_from_quad(fz_rect *r, const fz_quad *q) {
 fz_rect *mupdf_fz_bound_page(fz_context *ctx, fz_page *page, fz_rect *r) {
     *r = fz_bound_page(ctx, page);
     return r;
+}
+
+static void transparency_mask_close_device(fz_context *ctx, fz_device *dev)
+{
+    fz_close_device(ctx, dev->passthrough);
+}
+
+static void transparency_mask_drop_device(fz_context *ctx, fz_device *dev)
+{
+    fz_drop_device(ctx, dev->passthrough);
+}
+
+static void transparency_mask_fill_image(fz_context* ctx, fz_device* dev, fz_image* img, fz_matrix ctm, float alpha, fz_color_params color_params)
+{
+    if (img->mask) {
+        float black = 0.f;
+        fz_fill_image_mask(ctx, dev->passthrough, img->mask, ctm, fz_device_gray(ctx), &black, alpha, color_params);
+    }
+}
+
+fz_device *new_transparency_mask_device(fz_context* ctx, fz_device* dev)
+{
+    fz_device *transparency_mask_dev = fz_new_derived_device(ctx, fz_device);
+    transparency_mask_dev->passthrough = fz_keep_device(ctx, dev);
+    transparency_mask_dev->close_device = transparency_mask_close_device;
+    transparency_mask_dev->drop_device = transparency_mask_drop_device;
+    transparency_mask_dev->fill_image = transparency_mask_fill_image;
+    return transparency_mask_dev;
+}
+
+int page_has_transparency_mask(fz_context* ctx, fz_page* p)
+{
+    /* Other document types (EPUB, XPS, etc.) don't use smasks. */
+    pdf_page* page = pdf_page_from_fz_page(ctx, p);
+    if (!page) {
+        return 0;
+    }
+
+    pdf_obj* resources = pdf_page_resources(ctx, page);
+    pdf_obj* xobj = pdf_dict_get(ctx, resources, PDF_NAME(XObject));
+    if (!xobj) {
+        return 0;
+    }
+
+    static pdf_obj* const mask_keys[] = {
+        PDF_NAME(SMask),
+        PDF_NAME(Mask)
+    };
+    const int num_keys = sizeof(mask_keys) / sizeof(mask_keys[0]);
+
+    const int n = pdf_dict_len(ctx, xobj);
+    for (int i = 0; i < n; i++) {
+        pdf_obj* val = pdf_dict_get_val(ctx, xobj, i);
+        for (int k = 0; k < num_keys; k++) {
+            if (pdf_dict_get(ctx, val, mask_keys[k]))
+                return 1;
+        }
+    }
+    return 0;
 }
 
 /* wrappers for functions that throw exceptions mupdf-style (setjmp/longjmp) */

@@ -3,6 +3,96 @@ require("ffi_wrapper")
 local Blitbuffer = require("ffi/blitbuffer")
 
 describe("Blitbuffer unit tests", function()
+    describe("Saturation transform", function()
+        it("should preserve neutral saturation exactly", function()
+            local bb = Blitbuffer.new(1, 1, Blitbuffer.TYPE_BBRGB24)
+            bb:setPixel(0, 0, Blitbuffer.ColorRGB24(0x80, 0x40, 0x20))
+            local original = bb:getPixel(0, 0)
+            bb:adjustSaturation(1.0)
+            assert.are.same(original, bb:getPixel(0, 0))
+        end)
+
+        it("should desaturate and saturate color pixels", function()
+            local bb = Blitbuffer.new(1, 1, Blitbuffer.TYPE_BBRGB32)
+            local original = Blitbuffer.ColorRGB32(0xE0, 0x40, 0x20, 0x7F)
+            bb:setPixel(0, 0, original)
+            local original_spread = math.max(original.r, original.g, original.b) - math.min(original.r, original.g, original.b)
+
+            bb:adjustSaturation(0.2)
+            local desaturated = bb:getPixel(0, 0)
+            local desaturated_spread = math.max(desaturated.r, desaturated.g, desaturated.b) - math.min(desaturated.r, desaturated.g, desaturated.b)
+            assert.is_true(desaturated_spread < original_spread)
+            assert.are.equal(original.alpha, desaturated.alpha)
+
+            bb:setPixel(0, 0, original)
+            bb:adjustSaturation(2.0)
+            local saturated = bb:getPixel(0, 0)
+            local saturated_spread = math.max(saturated.r, saturated.g, saturated.b) - math.min(saturated.r, saturated.g, saturated.b)
+            assert.is_true(saturated_spread > original_spread)
+            assert.are.equal(original.alpha, saturated.alpha)
+        end)
+
+        it("should ignore grayscale buffers", function()
+            local bb = Blitbuffer.new(1, 1, Blitbuffer.TYPE_BB8)
+            bb:fill(Blitbuffer.Color8(0xAA))
+            bb:adjustSaturation(0.2)
+            assert.are.equal(0xAA, bb:getPixel(0, 0).a)
+        end)
+
+        it("should work correctly on rotated buffers", function()
+            local width, height = 4, 8
+            local original_color = Blitbuffer.ColorRGB32(0xE0, 0x40, 0x20, 0xFF)
+            local original_spread = math.max(original_color.r, original_color.g, original_color.b)
+                                  - math.min(original_color.r, original_color.g, original_color.b)
+
+            for rotation = 0, 3 do
+                local bb = Blitbuffer.new(width, height, Blitbuffer.TYPE_BBRGB32)
+                bb:setRotation(rotation)
+
+                local w = rotation % 2 == 1 and height or width
+                local h = rotation % 2 == 1 and width or height
+
+                for y = 0, h - 1 do
+                    for x = 0, w - 1 do
+                        bb:setPixel(x, y, original_color)
+                    end
+                end
+
+                bb:adjustSaturation(0.2)
+
+                for y = 0, h - 1 do
+                    for x = 0, w - 1 do
+                        local px = bb:getPixel(x, y)
+                        local spread = math.max(px.r, px.g, px.b)
+                                     - math.min(px.r, px.g, px.b)
+                        assert.is_true(spread < original_spread,
+                            string.format("rotation=%d pixel(%d,%d) spread %d not < %d",
+                                          rotation, x, y, spread, original_spread))
+                    end
+                end
+
+                for y = 0, h - 1 do
+                    for x = 0, w - 1 do
+                        bb:setPixel(x, y, original_color)
+                    end
+                end
+
+                bb:adjustSaturation(2.0)
+
+                for y = 0, h - 1 do
+                    for x = 0, w - 1 do
+                        local px = bb:getPixel(x, y)
+                        local spread = math.max(px.r, px.g, px.b)
+                                     - math.min(px.r, px.g, px.b)
+                        assert.is_true(spread > original_spread,
+                            string.format("rotation=%d pixel(%d,%d) spread %d not > %d",
+                                          rotation, x, y, spread, original_spread))
+                    end
+                end
+            end
+        end)
+    end)
+
     describe("Color conversion", function()
         -- 0xFF = 0b11111111
         -- 0xAA = 0b10101010
@@ -287,6 +377,15 @@ describe("Blitbuffer unit tests", function()
             assert.are.equals(bb:getPixel(test_x, test_y)['a'], new_c['a'])
         end)
 
+        it("should paint a large anti-aliased rounded corner", function()
+            local bb = Blitbuffer.new(256, 256, Blitbuffer.TYPE_BB8)
+            bb:fill(Blitbuffer.Color8(0xFF))
+
+            bb:paintRoundedCorner(31, 31, 137, 137, 4, 68, Blitbuffer.Color8(0), true)
+
+            assert.are.equal(0, bb:getPixel(31, 99).a)
+        end)
+
         it("should do color comparison correctly", function()
             assert.True(Blitbuffer.Color4(122) == Blitbuffer.Color4(122))
             assert.True(Blitbuffer.Color4L(122) == Blitbuffer.Color4L(122))
@@ -417,6 +516,66 @@ describe("Blitbuffer unit tests", function()
                     end
                 end
             end
+        end)
+    end)
+    describe("blitFrom with exactly one inverted buffer", function()
+        it("should invert BB8 pixels", function()
+            local src = Blitbuffer.new(4, 4, Blitbuffer.TYPE_BB8)
+            src:setPixel(1, 2, Blitbuffer.Color8(0x30))
+            local dst = Blitbuffer.new(4, 4, Blitbuffer.TYPE_BB8)
+            dst:setInverse(1)
+            dst:blitFrom(src)
+            dst:setInverse(0)
+            assert.are.equal(0xCF, dst:getPixel(1, 2).a)
+            assert.are.equal(0xFF, dst:getPixel(0, 0).a)
+        end)
+
+        it("should invert BBRGB32 pixels and keep alpha", function()
+            local src = Blitbuffer.new(4, 4, Blitbuffer.TYPE_BBRGB32)
+            src:setPixel(1, 2, Blitbuffer.ColorRGB32(0x10, 0x20, 0x30, 0x80))
+            local dst = Blitbuffer.new(4, 4, Blitbuffer.TYPE_BBRGB32)
+            dst:setInverse(1)
+            dst:blitFrom(src)
+            dst:setInverse(0)
+            local c = dst:getPixel(1, 2)
+            assert.are.same({0xEF, 0xDF, 0xCF, 0x80}, {c.r, c.g, c.b, c.alpha})
+        end)
+
+        it("should handle an inverted source and a rotated destination", function()
+            local src = Blitbuffer.new(4, 4, Blitbuffer.TYPE_BB8)
+            src:setPixel(1, 2, Blitbuffer.Color8(0x30))
+            src:setInverse(1)
+            for rotation = 0, 3 do
+                local dst = Blitbuffer.new(4, 4, Blitbuffer.TYPE_BB8)
+                dst:setRotation(rotation)
+                dst:blitFrom(src)
+                assert.are.equal(0xCF, dst:getPixel(1, 2).a)
+                assert.are.equal(0xFF, dst:getPixel(0, 0).a)
+            end
+        end)
+
+        it("should invert every pixel of a padded destination", function()
+            local src = Blitbuffer.new(4, 2, Blitbuffer.TYPE_BB8)
+            local dst = Blitbuffer.new(4, 2, Blitbuffer.TYPE_BB8, nil, 6, 4)
+            dst:setInverse(1)
+            dst:blitFrom(src)
+            dst:setInverse(0)
+            for y = 0, 1 do
+                for x = 0, 3 do
+                    assert.are.equal(0xFF, dst:getPixel(x, y).a)
+                end
+            end
+        end)
+
+        it("should stay within a full-width viewport", function()
+            local src = Blitbuffer.new(4, 2, Blitbuffer.TYPE_BB8)
+            local dst = Blitbuffer.new(6, 4, Blitbuffer.TYPE_BB8)
+            local viewport = dst:viewport(0, 1, 4, 2)
+            viewport:setInverse(1)
+            viewport:blitFrom(src)
+            assert.are.equal(0xFF, dst:getPixel(3, 2).a)
+            assert.are.equal(0x00, dst:getPixel(4, 1).a)
+            assert.are.equal(0x00, dst:getPixel(0, 3).a)
         end)
     end)
 end)

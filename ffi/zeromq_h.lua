@@ -1,17 +1,16 @@
 -- Automatically generated with ffi-cdecl.
 
-local ffi = require("ffi")
-
-ffi.cdef[[
+require("ffi").cdef[[
+typedef unsigned char byte;
 typedef struct _zmsg_t zmsg_t;
 typedef struct _zhash_t zhash_t;
 typedef struct _zsock_t zsock_t;
 typedef struct _zframe_t zframe_t;
 typedef struct _zpoller_t zpoller_t;
-static const int ZFRAME_MORE = 1;
-static const int ZFRAME_REUSE = 2;
-static const int ZMQ_IDENTITY = 5;
-static const int ZMQ_STREAM = 11;
+static const unsigned ZFRAME_MORE = 1;
+static const unsigned ZFRAME_REUSE = 2;
+static const unsigned ZMQ_IDENTITY = 5;
+static const unsigned ZMQ_STREAM = 11;
 int zmq_getsockopt(void *, int, void *, size_t *);
 int zmq_send(void *, const void *, size_t, int);
 int zsock_bind(zsock_t *, const char *, ...);
@@ -19,7 +18,7 @@ int zsock_connect(zsock_t *, const char *, ...);
 void zsock_destroy(zsock_t **);
 zsock_t *zsock_new(int);
 void *zsock_resolve(void *);
-unsigned char *zframe_data(zframe_t *);
+byte *zframe_data(zframe_t *);
 void zframe_destroy(zframe_t **);
 zframe_t *zframe_recv(void *);
 int zframe_send(zframe_t **, void *, int);

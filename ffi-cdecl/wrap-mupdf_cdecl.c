@@ -3,8 +3,6 @@
 
 #include "wrap-mupdf.h"
 
-#include "ffi-cdecl.h"
-
 cdecl_const(FZ_STEXT_BLOCK_TEXT)
 
 /* math */
@@ -24,12 +22,12 @@ cdecl_func(fz_install_external_font_funcs)
 /* archive */
 cdecl_type(fz_archive)
 cdecl_func(mupdf_open_directory)
-cdecl_func(mupdf_drop_archive)
+cdecl_func(fz_drop_archive)
 
 /* buffer */
 cdecl_type(fz_buffer)
 cdecl_func(mupdf_new_buffer_from_shared_data)
-cdecl_func(mupdf_drop_buffer)
+cdecl_func(fz_drop_buffer)
 
 /* context */
 cdecl_type(fz_alloc_context)
@@ -78,6 +76,9 @@ cdecl_func(fz_drop_page)
 
 /* links */
 cdecl_type(fz_link)
+cdecl_type(fz_link_drop_link_fn)
+cdecl_type(fz_link_set_rect_fn)
+cdecl_type(fz_link_set_uri_fn)
 cdecl_struct(fz_link)
 cdecl_func(mupdf_load_links)
 cdecl_func(mupdf_fz_resolve_link)
@@ -85,19 +86,23 @@ cdecl_func(fz_drop_link)
 
 /* location */
 cdecl_func(mupdf_fz_page_number_from_location)
-cdecl_func(mupdf_fz_location_from_page_number)
 
 /* outline */
 cdecl_func(mupdf_load_outline)
 cdecl_func(fz_drop_outline)
 
 /* stream */
-cdecl_func(mupdf_drop_stream)
+cdecl_func(fz_drop_stream)
 cdecl_func(mupdf_open_memory)
 
 /* structured text */
 cdecl_type(fz_stext_char)
 cdecl_struct(fz_stext_char)
+cdecl_type(fz_pool)
+cdecl_type(fz_pool_array)
+cdecl_type(fz_stext_grid_info)
+cdecl_type(fz_stext_grid_positions)
+cdecl_type(fz_stext_struct)
 
 cdecl_type(fz_stext_line)
 cdecl_struct(fz_stext_line)
@@ -136,8 +141,10 @@ cdecl_func(fz_device_bgr)
 /* device, rendering */
 cdecl_func(mupdf_new_draw_device)
 cdecl_func(mupdf_new_bbox_device)
+cdecl_func(mupdf_new_transparency_mask_device)
+cdecl_func(mupdf_page_has_transparency_mask)
 cdecl_func(mupdf_run_page)
-cdecl_func(fz_close_device)
+cdecl_func(mupdf_close_device)
 cdecl_func(fz_drop_device)
 
 /* pdf specifics */
@@ -155,6 +162,9 @@ cdecl_func(mupdf_pdf_set_annot_quad_points)
 cdecl_func(mupdf_pdf_set_annot_contents)
 cdecl_func(mupdf_pdf_set_annot_color)
 cdecl_func(mupdf_pdf_set_annot_opacity)
+cdecl_func(mupdf_pdf_set_annot_ink_list)
+cdecl_func(mupdf_pdf_set_annot_border_width)
+cdecl_func(mupdf_pdf_update_annot)
 cdecl_func(mupdf_pdf_first_annot)
 cdecl_func(mupdf_pdf_next_annot)
 cdecl_func(mupdf_pdf_annot_quad_point_count)

@@ -112,6 +112,53 @@ if(APPLE)
     message(STATUS "Apple deployment target: ${CMAKE_OSX_DEPLOYMENT_TARGET}")
 endif()
 
+set(COMPILER_LIB_EXTRA_SEARCH_PATHS)
+if(${CMAKE_SYSTEM_NAME} STREQUAL Darwin AND DEFINED BREW_PREFIX)
+    set(COMPILER_LIB_EXTRA_SEARCH_PATHS ${BREW_PREFIX}/lib)
+elseif(NOT ${CMAKE_SYSTEM_NAME} STREQUAL Darwin AND DEFINED ENV{LD_LIBRARY_PATH})
+    string(REPLACE ":" ";" COMPILER_LIB_EXTRA_SEARCH_PATHS $ENV{LD_LIBRARY_PATH})
+endif()
+
+# ffi-cdecl. {{{
+
+set(FFI_CDECL_DEPS)
+if(NOT FFI_CDECL)
+    find_executable(FFI_CDECL_CMD ffi-cdecl ffi-cdecl -v)
+endif()
+if(NOT FFI_CDECL_CMD)
+    if(EMULATE_READER)
+        set(LUAJIT ${OUTPUT_DIR}/luajit)
+        list(APPEND FFI_CDECL_DEPS luajit)
+        if(NOT FFI_CDECL)
+            foreach(VERSION 0.27 0.26)
+                set_libname(TREE_SITTER_SONAME tree-sitter VERSION ${VERSION})
+                find_compiler_lib_path(TREE_SITTER_LIB_${VERSION} ${TREE_SITTER_SONAME} ${COMPILER_LIB_EXTRA_SEARCH_PATHS})
+                if(TREE_SITTER_LIB_${VERSION})
+                    set(TREE_SITTER_LIB ${TREE_SITTER_LIB_${VERSION}})
+                    break()
+                endif()
+            endforeach()
+        endif()
+        if(NOT TREE_SITTER_LIB)
+            list(APPEND FFI_CDECL_DEPS tree-sitter)
+        endif()
+        if(NOT FFI_CDECL)
+            set_libname(TREE_SITTER_C_SONAME tree-sitter-c VERSION 15.0)
+            find_compiler_lib_path(TREE_SITTER_C_LIB ${TREE_SITTER_C_SONAME} ${COMPILER_LIB_EXTRA_SEARCH_PATHS})
+        endif()
+        if(NOT TREE_SITTER_C_LIB)
+            list(APPEND FFI_CDECL_DEPS tree-sitter-c)
+        endif()
+    else()
+        find_executable(LUAJIT LuaJIT luajit -v)
+    endif()
+    if(LUAJIT)
+        set(FFI_CDECL_CMD env LUA_PATH=${OUTPUT_DIR}/?.lua$<SEMICOLON>${OUTPUT_DIR}/?/init.lua LUA_CPATH=${OUTPUT_DIR}/?.so ${LUAJIT} ./ffi-cdecl/ffi-cdecl.lua)
+    endif()
+endif()
+
+# }}}
+
 # Git. {{{
 
 find_executable(GIT Git git --version REQUIRED)
@@ -141,22 +188,42 @@ check_libc_fn_exists(iconv iconv.h HAS_ICONV)
 # Detect if libc provides gettext support.
 check_libc_fn_exists(ngettext libintl.h HAS_GETTEXT)
 
+# Determine C library type
+if(NOT DEFINED CACHE{LIBC_TYPE})
+    if(ANDROID)
+        set(LIBC_TYPE Bionic CACHE INTERNAL "libc type")
+    elseif(APPLE)
+        set(LIBC_TYPE macOS CACHE INTERNAL "libc type")
+    else()
+        execute_process(COMMAND ${CMAKE_C_COMPILER} -E -P ${CMAKE_CURRENT_SOURCE_DIR}/libc_type_check.c RESULT_VARIABLE RET OUTPUT_VARIABLE OUT OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if(NOT RET EQUAL 0 OR NOT OUT MATCHES "(^|\n)libc_type=([A-Za-z]+)$")
+            message(FATAL_ERROR "could not determine libc type")
+        endif()
+        set(LIBC_TYPE ${CMAKE_MATCH_2} CACHE INTERNAL "libc type")
+        if(NOT LIBC_TYPE STREQUAL "GNU" AND NOT LIBC_TYPE STREQUAL "musl")
+            message(FATAL_ERROR "unsupported libc type: ${LIBC_TYPE}")
+        endif()
+    endif()
+    message(STATUS "Found libc type: ${LIBC_TYPE}")
+endif()
+
 # We'll want to ship the shared STL library on some platforms.
 #
 # We don't want to rely on `-static-libstdc++`, as it risks breaking the ODR. (Also, it was a pain to deal with because
 # of libtool, c.f., https://www.gnu.org/software/libtool/manual/html_node/Stripped-link-flags.html#Stripped-link-flags).
 #
 if(NOT ((ANDROID AND MONOLIBTIC) OR APPLE OR EMULATE_READER OR USE_SDL))
+    set(STL_INSTALL_CMD)
     if(ANDROID)
         set(STL_NAME libc++_shared.so)
     else()
         set(STL_NAME libstdc++.so.6)
     endif()
     find_compiler_lib_path(STL_PATH ${STL_NAME} REQUIRED)
-    append_binary_install_command(CMD_LIST ${STL_PATH} DESTINATION ${OUTPUT_DIR}/libs)
+    append_binary_install_command(STL_INSTALL_CMD ${STL_PATH} DESTINATION ${OUTPUT_DIR}/libs)
     add_custom_command(
         OUTPUT ${OUTPUT_DIR}/libs/${STL_NAME}
-        COMMAND ${CMD_LIST}
+        COMMAND ${STL_INSTALL_CMD}
         COMMENT "Installing '${STL_NAME}'"
         DEPENDS ${STL_PATH}
         VERBATIM
@@ -183,6 +250,9 @@ endif()
 # brotli
 declare_project(thirdparty/brotli EXCLUDE_FROM_ALL)
 
+# certifi
+declare_project(thirdparty/certifi)
+
 # crengine
 declare_project(
     cmake/crengine
@@ -197,20 +267,18 @@ declare_project(
     lunasvg
     md4c
     nanosvg
+    srell
     utf8proc
     xxhash
     zlib
     zstd
-    SOURCE_DIR thirdparty/kpvcrlib
+    SOURCE_DIR thirdparty/kpvcrlib/crengine
 )
 set(crengine_CMAKE_BINARY_DIR ${OUTPUT_DIR}/thirdparty/crengine)
 set(crengine_BINARY_DIR ${crengine_CMAKE_BINARY_DIR}/build)
 
 # cpu_features
 declare_project(thirdparty/cpu_features EXCLUDE_FROM_ALL)
-
-# curl
-declare_project(thirdparty/curl DEPENDS libressl zlib EXCLUDE_FROM_ALL)
 
 # czmq
 if(NOT WIN32)
@@ -252,15 +320,6 @@ set(fbdepth_CMAKE_SOURCE_DIR ${fbink_CMAKE_SOURCE_DIR})
 declare_project(thirdparty/libfbink_input ${EXCLUDE_FROM_ALL})
 set(libfbink_input_DOWNLOAD_DIR ${fbink_DOWNLOAD_DIR})
 set(libfbink_input_CMAKE_SOURCE_DIR ${fbink_CMAKE_SOURCE_DIR})
-
-# ffi-cdecl
-if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
-    set(DEPENDS)
-    if(EMULATE_READER)
-        list(APPEND DEPENDS luajit)
-    endif()
-    declare_project(thirdparty/ffi-cdecl DEPENDS ${DEPENDS} EXCLUDE_FROM_ALL)
-endif()
 
 # freetype
 declare_project(thirdparty/freetype2 DEPENDS brotli zlib)
@@ -305,11 +364,11 @@ declare_project(thirdparty/kobo-usbms ${EXCLUDE_FROM_ALL})
 declare_project(thirdparty/koreader-lfs DEPENDS luajit)
 
 # leptonica
-declare_project(thirdparty/leptonica DEPENDS libpng)
+declare_project(thirdparty/leptonica DEPENDS libpng zlib)
 
 # libarchive
 set(DEPENDS zlib zstd)
-if(ANDROID)
+if(NOT (APPLE OR EMULATE_READER))
     list(APPEND DEPENDS xz)
 endif()
 declare_project(thirdparty/libarchive DEPENDS ${DEPENDS})
@@ -318,7 +377,7 @@ declare_project(thirdparty/libarchive DEPENDS ${DEPENDS})
 declare_project(thirdparty/libjpeg-turbo)
 
 # libk2pdfopt
-declare_project(thirdparty/libk2pdfopt DEPENDS leptonica libpng tesseract zlib)
+declare_project(thirdparty/libk2pdfopt DEPENDS leptonica tesseract)
 
 # libpng
 declare_project(thirdparty/libpng DEPENDS zlib EXCLUDE_FROM_ALL)
@@ -422,6 +481,9 @@ declare_project(thirdparty/popen-noshell EXCLUDE_FROM_ALL)
 # proxy-libintl
 declare_project(thirdparty/proxy-libintl EXCLUDE_FROM_ALL)
 
+# rsync
+declare_project(thirdparty/rsync EXCLUDE_FROM_ALL DEPENDS libressl xxhash zlib zstd)
+
 # sdcv
 declare_project(thirdparty/sdcv DEPENDS glib zlib)
 
@@ -431,18 +493,8 @@ if(USE_SDL STREQUAL "builtin")
 elseif(EMULATE_READER)
     # We need a recent enough version for accumulated whole scroll "ticks" in mouse wheel events.
     set(SDL3_MIN_VER 3.2.12)
-    if(APPLE)
-        set(SDL3_SONAME libSDL3.0.dylib)
-    else()
-        set(SDL3_SONAME libSDL3.so.0)
-    endif()
-    set(EXTRA_SEARCH_PATHS)
-    if(${CMAKE_SYSTEM_NAME} STREQUAL Darwin AND DEFINED BREW_PREFIX)
-        set(EXTRA_SEARCH_PATHS ${BREW_PREFIX}/lib)
-    elseif(NOT ${CMAKE_SYSTEM_NAME} STREQUAL Darwin AND DEFINED ENV{LD_LIBRARY_PATH})
-        string(REPLACE ":" ";" EXTRA_SEARCH_PATHS $ENV{LD_LIBRARY_PATH})
-    endif()
-    find_compiler_lib_path(SDL3_LIB ${SDL3_SONAME} ${EXTRA_SEARCH_PATHS})
+    set_libname(SDL3_SONAME SDL3 VERSION 0)
+    find_compiler_lib_path(SDL3_LIB ${SDL3_SONAME} ${COMPILER_LIB_EXTRA_SEARCH_PATHS})
     if(SDL3_LIB AND NOT DEFINED CACHE{SDL3_VER})
         string(REGEX MATCH [[([^.]+)\.([^.]+)\.([^.]+)]] _ ${SDL3_MIN_VER})
         math(EXPR SDL3_MIN_INT_VER "${CMAKE_MATCH_1} * 1000000 + ${CMAKE_MATCH_2} * 1000 + ${CMAKE_MATCH_3}")
@@ -473,13 +525,11 @@ declare_project(thirdparty/sdl3 ${EXCLUDE_FROM_ALL})
 # sqlite
 declare_project(thirdparty/sqlite)
 
-# tar
-if(NOT (ANDROID OR APPLE OR EMULATE_READER OR WIN32))
-    set(EXCLUDE_FROM_ALL)
-else()
-    set(EXCLUDE_FROM_ALL EXCLUDE_FROM_ALL)
-endif()
-declare_project(thirdparty/tar ${EXCLUDE_FROM_ALL})
+# srell
+declare_project(
+    thirdparty/srell
+    SOURCE_DIR thirdparty/srell
+)
 
 # tesseract
 set(DEPENDS leptonica)
@@ -487,6 +537,12 @@ if(ANDROID)
     list(APPEND DEPENDS cpu_features)
 endif()
 declare_project(thirdparty/tesseract DEPENDS ${DEPENDS})
+
+# tree-sitter
+declare_project(thirdparty/tree-sitter EXCLUDE_FROM_ALL)
+
+# tree-sitter-c
+declare_project(thirdparty/tree-sitter-c EXCLUDE_FROM_ALL)
 
 # turbo
 declare_project(thirdparty/turbo DEPENDS libressl)
@@ -505,14 +561,6 @@ declare_project(thirdparty/zlib)
 
 # zstd
 declare_project(thirdparty/zstd)
-
-# zsync2
-if(CERVANTES OR KINDLE OR KOBO OR POCKETBOOK OR REMARKABLE OR SONY_PRSTUX)
-    set(EXCLUDE_FROM_ALL)
-else()
-    set(EXCLUDE_FROM_ALL EXCLUDE_FROM_ALL)
-endif()
-declare_project(thirdparty/zsync2 DEPENDS curl libressl zlib ${EXCLUDE_FROM_ALL})
 
 # }}}
 
@@ -576,7 +624,7 @@ add_custom_target(rm-install-stamps COMMAND rm -f ${INSTALL_STAMPS})
 
 # FFI cdecls generation. {{{
 
-if(TARGET ffi-cdecl)
+if(FFI_CDECL_CMD)
 
 add_custom_target(ffi-deps)
 add_custom_target(ffi DEPENDS ffi-deps)
@@ -586,7 +634,7 @@ function(ffi_target NAME OUTPUT INPUT)
     if(NOT OUTPUT MATCHES [[/]])
         set(OUTPUT ffi/${OUTPUT})
     endif()
-    list(PREPEND _DEPENDS ffi-cdecl)
+    list(PREPEND _DEPENDS ${FFI_CDECL_DEPS})
     if(TARGET ${NAME})
         list(PREPEND _DEPENDS ${NAME})
     endif()
@@ -595,10 +643,25 @@ function(ffi_target NAME OUTPUT INPUT)
     endif()
     get_filename_component(INPUT_PATH ${INPUT} ABSOLUTE BASE_DIR ${BASE_DIR})
     get_filename_component(TGT ${OUTPUT} NAME)
+    set(FFI_CDECL_FLAGS
+        -c ${CMAKE_C_COMPILER}
+        -f -std=gnu11
+        -p --env-only
+        -I ${STAGING_DIR}/include
+    )
+    if(APPLE)
+        # See note in Makefile.defs.
+        list(APPEND FFI_CDECL_FLAGS -f -idirafter,/usr/local/include)
+    endif()
     add_custom_target(
         ${TGT}
         DEPENDS ${_DEPENDS}
-        COMMAND ${STAGING_DIR}/bin/ffi-cdecl -o ${OUTPUT} ${_ARGS} ${INPUT}
+        # NOTE: old versions of pkgconf (like the one provided by Ubuntu Jammy)
+        # don't correctly handle `--env-only --with-path=…` (ignoring that last
+        # option).
+        COMMAND env PKG_CONFIG_PATH=${STAGING_DIR}/lib/pkgconfig
+                ${FFI_CDECL_CMD} ${FFI_CDECL_FLAGS}
+                ${_ARGS} ${INPUT} -o ${OUTPUT}
         COMMENT "Generating 'ffi/${TGT}'"
         VERBATIM
         WORKING_DIRECTORY ${BASE_DIR}
@@ -606,12 +669,22 @@ function(ffi_target NAME OUTPUT INPUT)
     if(NOT TARGET ${NAME}-ffi)
         add_custom_target(${NAME}-ffi)
         if(NOT ${_EXCLUDE_FROM_ALL} AND (NOT NAME IN_LIST PROJECTS OR ${NAME}_BUILT_BY_DEFAULT))
-            add_dependencies(ffi-deps ${_DEPENDS})
+            if(_DEPENDS)
+                add_dependencies(ffi-deps ${_DEPENDS})
+            endif()
             add_dependencies(ffi ${NAME}-ffi)
         endif()
     endif()
     add_dependencies(${NAME}-ffi ${TGT})
 endfunction()
+
+# bookeen
+if(BOOKEEN)
+    set(EXCLUDE_FROM_ALL)
+else()
+    set(EXCLUDE_FROM_ALL EXCLUDE_FROM_ALL)
+endif()
+ffi_target(bookeen mxcfb_bookeen_h.lua mxcfb_bookeen_decl.c ${EXCLUDE_FROM_ALL})
 
 # cervantes
 if(CERVANTES)
@@ -622,7 +695,13 @@ endif()
 ffi_target(cervantes mxcfb_cervantes_h.lua mxcfb_cervantes_decl.c ${EXCLUDE_FROM_ALL})
 
 # czmq
-ffi_target(czmq zeromq_h.lua zeromq_cdecl.c ARGS -d libczmq)
+if(APPLE)
+    # Generating FFI cdecls for czmq currently fails on macOS…
+    set(EXCLUDE_FROM_ALL EXCLUDE_FROM_ALL)
+else()
+    set(EXCLUDE_FROM_ALL)
+endif()
+ffi_target(czmq zeromq_h.lua zeromq_cdecl.c ARGS -d libczmq ${EXCLUDE_FROM_ALL})
 
 # fbdepth / fbink / libfbink_input
 get_relative_path(${libfbink_input_SOURCE_DIR} ${BASE_DIR} FBINK_INPUT_SRC)
@@ -646,7 +725,7 @@ endif()
 set(VERSIONS 505 507 508 509 511 512 514 515 517 519 605 608 610 611)
 add_custom_target(
     inkview-ffi
-    COMMAND ./utils/gen_inkview_h.py ffi/inkview_h.lua ${CMAKE_CURRENT_BINARY_DIR} ${VERSIONS}
+    COMMAND ./utils/gen_merged_cdecl_h.py ffi/inkview_h.lua ffi-cdecl/inkview_h_.lua target_version ${CMAKE_CURRENT_BINARY_DIR} ${VERSIONS}
     COMMENT "Generating 'ffi/inkview_h.lua'"
     VERBATIM
     WORKING_DIRECTORY ${BASE_DIR}
@@ -657,7 +736,7 @@ endif()
 foreach(V IN LISTS VERSIONS)
     ffi_target(inkview ${CMAKE_CURRENT_BINARY_DIR}/inkview_h_${V}.lua inkview_decl.c ${EXCLUDE_FROM_ALL}
         DEPENDS freetype2
-        ARGS -D POCKETBOOK_VERSION=${V} -I ${INKVIEW_DIR}/${V} -d freetype2 -f -Wno-deprecated-declarations
+        ARGS -D POCKETBOOK_VERSION=${V} -I ${INKVIEW_DIR}/${V} -d freetype2 -f -Wno-deprecated-declarations -M
     )
 endforeach()
 
@@ -683,7 +762,7 @@ endforeach()
 ffi_target(leptonica leptonica_h.lua leptonica_cdecl.c ARGS -d lept)
 
 # libarchive
-ffi_target(libarchive libarchive_h.lua libarchive_cdecl.c ARGS -d libarchive)
+ffi_target(libarchive libarchive_h.lua libarchive_cdecl.c ARGS -d libarchive -r ffi/posix_h)
 
 # libjpeg-turbo
 ffi_target(libjpeg-turbo turbojpeg_h.lua turbojpeg_decl.c ARGS -d libturbojpeg)
@@ -707,14 +786,14 @@ endif()
 ffi_target(linux einkfb_h.lua einkfb_decl.c ${EXCLUDE_FROM_ALL})
 ffi_target(linux inotify_h.lua inotify_decl.c ${EXCLUDE_FROM_ALL})
 ffi_target(linux linux_fb_h.lua linux_fb_decl.c ${EXCLUDE_FROM_ALL})
-ffi_target(linux linux_input_h.lua linux_input_decl.c ${EXCLUDE_FROM_ALL})
-ffi_target(linux rtc_h.lua rtc_cdecl.c ${EXCLUDE_FROM_ALL})
+ffi_target(linux linux_input_h.lua linux_input_decl.c ${EXCLUDE_FROM_ALL} ARGS -r ffi/posix_h)
+ffi_target(linux rtc_h.lua rtc_cdecl.c ${EXCLUDE_FROM_ALL} ARGS -r ffi/posix_h)
 
 # lodepng
 ffi_target(lodepng lodepng_h.lua lodepng_decl.c)
 
 # mupdf
-ffi_target(mupdf mupdf_h.lua wrap-mupdf_cdecl.c ARGS -I . -f -std=gnu11)
+ffi_target(mupdf mupdf_h.lua wrap-mupdf_cdecl.c ARGS -I .)
 
 # pocketbook
 if(POCKETBOOK)
@@ -724,6 +803,42 @@ else()
 endif()
 ffi_target(pocketbook mxcfb_pocketbook_h.lua mxcfb_pb_decl.c ${EXCLUDE_FROM_ALL})
 
+# posix
+set(VERSIONS
+    android_arm android_arm64 android_x86 android_x64
+    linux_gnu_arm linux_gnu_arm64 linux_gnu_x64
+    linux_musl_arm linux_musl_arm64 linux_musl_x64
+    macos
+)
+add_custom_target(
+    posix-ffi
+    COMMAND ./utils/gen_merged_cdecl_h.py ffi/posix_h.lua ffi-cdecl/posix_h_.lua platform ffi-cdecl ${VERSIONS}
+    COMMENT "Generating 'ffi/posix_h.lua'"
+    VERBATIM
+    WORKING_DIRECTORY ${BASE_DIR}
+)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)")
+    set(LUAJIT_ARCH "arm64")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^arm")
+    set(LUAJIT_ARCH "arm")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)")
+    set(LUAJIT_ARCH "x64")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(i[3-6]86|x86)")
+    set(LUAJIT_ARCH "x86")
+else()
+    message(FATAL_ERROR "unsupported CMAKE_SYSTEM_PROCESSOR value: ${CMAKE_SYSTEM_PROCESSOR}")
+endif()
+if(ANDROID)
+    set(POSIX_PLATFORM android_${LUAJIT_ARCH})
+elseif(APPLE)
+    set(POSIX_PLATFORM macos)
+else()
+    string(TOLOWER linux_${LIBC_TYPE}_${LUAJIT_ARCH} POSIX_PLATFORM)
+endif()
+set(POSIX_PLATFORM ffi-cdecl/posix_h_${POSIX_PLATFORM}.lua)
+string(TOUPPER LIBC_${LIBC_TYPE} POSIX_LIBC_FLAG)
+ffi_target(posix ${POSIX_PLATFORM} posix_cdecl.c ARGS -M -W -D ${POSIX_LIBC_FLAG} EXCLUDE_FROM_ALL)
+
 # remarkable
 if(REMARKABLE)
     set(EXCLUDE_FROM_ALL)
@@ -731,12 +846,26 @@ else()
     set(EXCLUDE_FROM_ALL EXCLUDE_FROM_ALL)
 endif()
 ffi_target(remarkable mxcfb_remarkable_h.lua mxcfb_remarkable_decl.c ${EXCLUDE_FROM_ALL})
+ffi_target(remarkable qtfb_h.lua qtfb_cdecl.c ${EXCLUDE_FROM_ALL})
+ffi_target(remarkable blight_h.lua blight_cdecl.c ${EXCLUDE_FROM_ALL})
 
 # sdl3
 ffi_target(sdl3 SDL3_h.lua SDL3_decl.c ARGS -d sdl3)
 
+# sqlite
+ffi_target(sqlite sqlite3_h.lua sqlite3_cdecl.c)
+
+# tree-sitter
+ffi_target(tree-sitter tree_sitter_h.lua tree_sitter_cdecl.c DEPENDS tree-sitter-c EXCLUDE_FROM_ALL)
+
 # utf8proc
 ffi_target(utf8proc utf8proc_h.lua utf8proc_decl.c ARGS -d libutf8proc)
+
+# xxhash
+ffi_target(xxhash xxhash_h.lua xxhash_cdecl.c)
+
+# xz
+ffi_target(xz xz_h.lua xz_cdecl.c)
 
 # zlib
 ffi_target(zlib zlib_h.lua zlib_decl.c ARGS -d zlib)
@@ -747,5 +876,47 @@ ffi_target(zstd zstd_h.lua zstd_decl.c ARGS -d libzstd)
 endif()
 
 # }}}
+
+# Summary {{{
+
+set(SUMMARY "\n")
+
+function(summary_section NAME ENV_VARS)
+    string(APPEND SUMMARY "\n${NAME}:\n\n")
+    foreach(VAR IN LISTS ARGN)
+        set(HEADER "${VAR}                    ")
+        string(SUBSTRING "${HEADER}" 0 20 HEADER)
+        set(VAL "")
+        if(ENV_VARS)
+            if(DEFINED ENV{${VAR}})
+                set(VAL "$ENV{${VAR}}")
+            endif()
+        elseif(DEFINED ${VAR})
+            set(VAL "${${VAR}}")
+        endif()
+        string(APPEND SUMMARY "    ${HEADER}: ${VAL}\n")
+    endforeach()
+    set(SUMMARY ${SUMMARY} PARENT_SCOPE)
+endfunction()
+
+summary_section("Target machine" FALSE CHOST CC CFLAGS CXX CXXFLAGS LD LDFLAGS DYNLIB_LDFLAGS AR NM OBJCOPY RANLIB RC STRIP LIB_EXT VECTO_CFLAGS)
+summary_section("Build machine"  FALSE HOSTCFLAGS HOSTCXX)
+summary_section("Miscellaneous"  FALSE FFI_CDECL KOTASYNC MONOLIBTIC USE_LJ_WPACLIENT USE_SDL WANT_SIMD GLIBC_VERSION_MAX KEEP_DEBUG)
+summary_section("CI"             TRUE  CI GITHUB_ACTIONS)
+summary_section("OS"             FALSE ANDROID APPLE LINUX)
+summary_section("Platform"       FALSE EMULATE_READER CERVANTES KINDLE KOBO LEGACY POCKETBOOK REMARKABLE)
+summary_section("Luajit"         FALSE SKIP_LUAJIT_BIN USE_LUAJIT_LIB)
+if(ANDROID)
+    summary_section("Android"    TRUE ANDROID_ARCH NDKABI ANDROID_HOME ANDROID_SDK_ROOT ANDROID_NDK_HOME ANDROID_NDK_ROOT)
+elseif(APPLE)
+    summary_section("macOS"      TRUE MACOSX_DEPLOYMENT_TARGET)
+endif()
+
+if(NOT DEFINED CACHE{SUMMARY_SHOWN})
+    message(STATUS "${SUMMARY}")
+    set(SUMMARY_SHOWN TRUE CACHE INTERNAL "summary shown")
+endif()
+
+# }}
 
 # vim: foldmethod=marker foldlevel=0

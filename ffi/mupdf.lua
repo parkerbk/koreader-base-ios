@@ -146,10 +146,10 @@ function mupdf.openDocumentFromText(text, magic, html_resource_directory)
     local mupdf_doc = {
         doc = W.mupdf_open_document_with_stream_and_dir(ctx, magic, stream, archive),
     }
-    W.mupdf_drop_stream(ctx, stream)
+    M.fz_drop_stream(ctx, stream)
 
     if archive ~= nil then
-        W.mupdf_drop_archive(ctx, archive)
+        M.fz_drop_archive(ctx, archive)
     end
 
     if mupdf_doc.doc == nil then
@@ -357,7 +357,7 @@ function document_mt.__index:writeDocument(filename)
     opts[0].do_garbage = 0
     opts[0].do_linear = 0
     local ok = W.mupdf_pdf_save_document(self.ctx, ffi.cast("pdf_document*", self.doc), filename, opts)
-    if ok == nil then merror(self.ctx, "could not write document") end
+    if not ok then merror(self.ctx, "could not write document") end
 end
 
 
@@ -413,9 +413,9 @@ function page_mt.__index:getUsedBBox()
     local dev = W.mupdf_new_bbox_device(self.ctx, result)
     if dev == nil then merror(self.ctx, "cannot allocate bbox_device") end
     local ok = W.mupdf_run_page(self.ctx, self.page, dev, M.fz_identity, nil)
-    M.fz_close_device(self.ctx, dev)
+               and W.mupdf_close_device(self.ctx, dev)
     M.fz_drop_device(self.ctx, dev)
-    if ok == nil then merror(self.ctx, "cannot calculate bbox for page") end
+    if not ok then merror(self.ctx, "cannot calculate bbox for page") end
 
     return result.x0, result.y0, result.x1, result.y1
 end
@@ -670,16 +670,32 @@ function page_mt.__index:getPageLinks()
     return links
 end
 
-local function run_page(page, pixmap, ctm)
+local function run_page(page, pixmap, ctm, background_cleanup)
     M.fz_clear_pixmap_with_value(page.ctx, pixmap, 0xff)
 
     local dev = W.mupdf_new_draw_device(page.ctx, nil, pixmap)
     if dev == nil then merror(page.ctx, "cannot create draw device") end
 
+    if background_cleanup and W.mupdf_page_has_transparency_mask(page.ctx, page.page) ~= 0 then
+        local transparency_mask_dev = W.mupdf_new_transparency_mask_device(page.ctx, dev)
+        -- If `mupdf_new_transparency_mask_device` was successful,
+        -- `fz_keep_device(dev)` has been called and `dev`'s
+        -- reference count is now 2. And if an error occurred,
+        -- the count is still 1 and we need to drop the device
+        -- to free it.
+        M.fz_drop_device(page.ctx, dev)
+        if transparency_mask_dev == nil then
+            merror(page.ctx, "cannot create transparency mask device")
+        end
+        dev = transparency_mask_dev
+    end
+
     local ok = W.mupdf_run_page(page.ctx, page.page, dev, ctm, nil)
-    M.fz_close_device(page.ctx, dev)
+               and W.mupdf_close_device(page.ctx, dev)
+
     M.fz_drop_device(page.ctx, dev)
-    if ok == nil then merror(page.ctx, "could not run page") end
+
+    if not ok then merror(page.ctx, "could not run page") end
 end
 --[[
 render page to blitbuffer
@@ -717,10 +733,14 @@ function page_mt.__index:draw_new(draw_context, width, height, offset_x, offset_
         self.ctx, colorspace, bbox, nil, self.doc.color and 1 or 0, ffi.cast("unsigned char*", bb.data))
     if pix == nil then merror(self.ctx, "cannot allocate pixmap") end
 
-    run_page(self, pix, ctm)
+    run_page(self, pix, ctm, draw_context.background_cleanup)
 
     if draw_context.gamma >= 0.0 then
         M.fz_gamma_pixmap(self.ctx, pix, draw_context.gamma)
+    end
+
+    if draw_context.saturation ~= 1.0 then
+        bb:adjustSaturation(draw_context.saturation)
     end
 
     M.fz_drop_pixmap(self.ctx, pix)
@@ -777,13 +797,17 @@ function page_mt.__index:addMarkupAnnotation(points, n, type, bb_color)
     if annot == nil then merror(self.ctx, "could not create annotation") end
 
     local ok = W.mupdf_pdf_set_annot_quad_points(self.ctx, annot, n, points)
-    if ok == nil then merror(self.ctx, "could not set annotation quadpoints") end
+    if not ok then merror(self.ctx, "could not set annotation quadpoints") end
 
     ok = W.mupdf_pdf_set_annot_color(self.ctx, annot, 3, color)
-    if ok == nil then merror(self.ctx, "could not set annotation color") end
+    if not ok then merror(self.ctx, "could not set annotation color") end
 
     ok = W.mupdf_pdf_set_annot_opacity(self.ctx, annot, alpha)
-    if ok == nil then merror(self.ctx, "could not set annotation opacity") end
+    if not ok then merror(self.ctx, "could not set annotation opacity") end
+
+    -- Synthesize /Rect and /AP appearance stream, needed for visibility in desktop PDF viewers
+    ok = W.mupdf_pdf_update_annot(self.ctx, annot)
+    if not ok then merror(self.ctx, "could not update markup annotation") end
 
     -- Fetch back MuPDF's stored coordinates of all quadpoints, as they may have been modified/rounded
     -- (we need the exact ones that were saved if we want to be able to find them for deletion/update)
@@ -792,9 +816,63 @@ function page_mt.__index:addMarkupAnnotation(points, n, type, bb_color)
     end
 end
 
-function page_mt.__index:deleteMarkupAnnotation(annot)
+-- Add an ink annotation (/Subtype /Ink) built from one or more freehand strokes.
+--   strokes : array of strokes; each stroke is an array of { x=, y= } points in
+--             native page coordinates (same convention as quad points above).
+--   bb_color: { r, g, b } components 0-255.
+--   width   : ink border (line) width in points.
+--   opacity : 0..1.
+function page_mt.__index:addInkAnnotation(strokes, bb_color, width, opacity)
+    local n = #strokes
+    if n == 0 then return end
+
+    -- counts[i] = number of points in stroke i; vertices = flattened fz_point[].
+    local counts = ffi.new("int[?]", n)
+    local total = 0
+    for i = 1, n do
+        counts[i-1] = #strokes[i]
+        total = total + #strokes[i]
+    end
+    if total == 0 then return end
+
+    local vertices = ffi.new("fz_point[?]", total)
+    local k = 0
+    for i = 1, n do
+        for j = 1, #strokes[i] do
+            vertices[k].x = strokes[i][j].x
+            vertices[k].y = strokes[i][j].y
+            k = k + 1
+        end
+    end
+
+    local annot = W.mupdf_pdf_create_annot(self.ctx, ffi.cast("pdf_page*", self.page), M.PDF_ANNOT_INK)
+    if annot == nil then merror(self.ctx, "could not create ink annotation") end
+
+    local ok = W.mupdf_pdf_set_annot_ink_list(self.ctx, annot, n, counts, vertices)
+    if not ok then merror(self.ctx, "could not set ink list") end
+
+    local color = ffi.new("float[3]")
+    color[0] = bb_color.r / 255
+    color[1] = bb_color.g / 255
+    color[2] = bb_color.b / 255
+    ok = W.mupdf_pdf_set_annot_color(self.ctx, annot, 3, color)
+    if not ok then merror(self.ctx, "could not set ink annotation color") end
+
+    ok = W.mupdf_pdf_set_annot_border_width(self.ctx, annot, width or 1.0)
+    if not ok then merror(self.ctx, "could not set ink annotation border width") end
+
+    ok = W.mupdf_pdf_set_annot_opacity(self.ctx, annot, opacity or 1.0)
+    if not ok then merror(self.ctx, "could not set ink annotation opacity") end
+
+    -- Synthesize the /Rect and /AP appearance stream, without which the
+    -- annotation is invisible in desktop PDF viewers (Preview, Acrobat, ...).
+    ok = W.mupdf_pdf_update_annot(self.ctx, annot)
+    if not ok then merror(self.ctx, "could not update ink annotation") end
+end
+
+function page_mt.__index:deleteAnnotation(annot)
     local ok = W.mupdf_pdf_delete_annot(self.ctx, ffi.cast("pdf_page*", self.page), annot)
-    if ok == nil then merror(self.ctx, "could not delete markup annotation") end
+    if not ok then merror(self.ctx, "could not delete annotation") end
 end
 
 function page_mt.__index:getMarkupAnnotation(points, n)
@@ -827,7 +905,7 @@ end
 
 function page_mt.__index:updateMarkupAnnotation(annot, contents)
     local ok = W.mupdf_pdf_set_annot_contents(self.ctx, annot, contents)
-    if ok == nil then merror(self.ctx, "could not update markup annot contents") end
+    if not ok then merror(self.ctx, "could not update markup annot contents") end
 end
 
 function page_mt.__index:getEmbeddedAnnotations()
@@ -871,7 +949,7 @@ function mupdf.renderImage(data, size, width, height)
     local buffer = W.mupdf_new_buffer_from_shared_data(ctx,
                      ffi.cast("unsigned char*", data), size)
     local image = W.mupdf_new_image_from_buffer(ctx, buffer)
-    W.mupdf_drop_buffer(ctx, buffer)
+    M.fz_drop_buffer(ctx, buffer)
     if image == nil then merror(ctx, "could not load image data") end
     local pixmap = W.mupdf_get_pixmap_from_image(ctx,
                     image, nil, nil, nil, nil)
@@ -912,19 +990,15 @@ function mupdf.renderImage(data, size, width, height)
     local bb
     if mupdf.bgr and ncomp >= 3 then
         local bgr_pixmap = W.mupdf_convert_pixmap(ctx, pixmap, M.fz_device_bgr(ctx), nil, nil, M.fz_default_color_params, (ncomp == 4 and 1 or 0))
-        if pixmap == nil then
+        M.fz_drop_pixmap(ctx, pixmap)
+        if bgr_pixmap == nil then
             merror(ctx, "could not convert pixmap to BGR")
         end
-        M.fz_drop_pixmap(ctx, pixmap)
-
-        local p = M.fz_pixmap_samples(ctx, bgr_pixmap)
-        bb = BlitBuffer.new(p_width, p_height, bbtype, p):copy()
-        M.fz_drop_pixmap(ctx, bgr_pixmap)
-    else
-        local p = M.fz_pixmap_samples(ctx, pixmap)
-        bb = BlitBuffer.new(p_width, p_height, bbtype, p):copy()
-        M.fz_drop_pixmap(ctx, pixmap)
+        pixmap = bgr_pixmap
     end
+    local p = M.fz_pixmap_samples(ctx, pixmap)
+    bb = BlitBuffer.new(p_width, p_height, bbtype, p):copy()
+    M.fz_drop_pixmap(ctx, pixmap)
     return bb
 end
 
@@ -1070,7 +1144,7 @@ local function bmpmupdf_pixmap_to_bmp(bmp, pixmap)
     end
 end
 
-local function render_for_kopt(bmp, page, scale, bounds)
+local function render_for_kopt(bmp, page, scale, bounds, background_cleanup)
     local k2pdfopt = get_k2pdfopt()
 
     local bbox = ffi.new("fz_irect")
@@ -1087,7 +1161,7 @@ local function render_for_kopt(bmp, page, scale, bounds)
     local pix = W.mupdf_new_pixmap_with_bbox(page.ctx, colorspace, bbox, nil, 1)
     if pix == nil then merror(page.ctx, "could not allocate pixmap") end
 
-    run_page(page, pix, ctm)
+    run_page(page, pix, ctm, background_cleanup)
 
     k2pdfopt.bmp_init(bmp)
 
@@ -1096,10 +1170,10 @@ local function render_for_kopt(bmp, page, scale, bounds)
     M.fz_drop_pixmap(page.ctx, pix)
 end
 
-function page_mt.__index:getPagePix(kopt_context)
+function page_mt.__index:getPagePix(kopt_context, render_mode, background_cleanup)
     local bounds = ffi.new("fz_rect", kopt_context.bbox.x0, kopt_context.bbox.y0, kopt_context.bbox.x1, kopt_context.bbox.y1)
 
-    render_for_kopt(kopt_context.src, self, kopt_context.zoom, bounds)
+    render_for_kopt(kopt_context.src, self, kopt_context.zoom, bounds, background_cleanup ~= nil and background_cleanup ~= 0)
 
     kopt_context.page_width = kopt_context.src.width
     kopt_context.page_height = kopt_context.src.height
@@ -1108,7 +1182,7 @@ end
 function page_mt.__index:toBmp(bmp, dpi)
     local bounds = ffi.new("fz_rect")
     W.mupdf_fz_bound_page(self.ctx, self.page, bounds)
-    render_for_kopt(bmp, self, dpi/72, bounds)
+    render_for_kopt(bmp, self, dpi/72, bounds, false)
 end
 
 return mupdf
