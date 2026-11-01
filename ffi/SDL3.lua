@@ -172,6 +172,7 @@ function S.open(w, h, x, y)
     if os.getenv("KO_IOS") == "1" then
         ffi.cdef[[
             void ko_ios_get_safe_area_pixels(int *t, int *r, int *b, int *l);
+            int ko_ios_in_background(void);
         ]]
         S.applyIOSSafeArea(S.window_pixel_w, S.window_pixel_h)
     end
@@ -183,6 +184,11 @@ end
 -- the bb inside the notch/home-indicator bezel. Called from S.open()
 -- and again from framebuffer:resize() (e.g. on device rotation).
 -- Returns true if the inset values changed.
+--- iOS kills apps that draw from the background, where read aloud keeps us running.
+function S.isInIOSBackground()
+    return os.getenv("KO_IOS") == "1" and ffi.C.ko_ios_in_background() ~= 0
+end
+
 function S.applyIOSSafeArea(window_w, window_h)
     if os.getenv("KO_IOS") ~= "1" then return false end
     local t = ffi.new("int[1]", 0)
@@ -748,8 +754,10 @@ function S.waitForEvent(sec, usec)
         -- (partially) on top of it.
         -- Handling `SDL_EVENT_WINDOW_EXPOSED` is the only way to deal with
         -- this without sending regular updates.
-        SDL.SDL_RenderTexture(S.renderer, S.texture, nil, nil)
-        SDL.SDL_RenderPresent(S.renderer)
+        if not S.isInIOSBackground() then
+            SDL.SDL_RenderTexture(S.renderer, S.texture, nil, nil)
+            SDL.SDL_RenderPresent(S.renderer)
+        end
     elseif (event.type == SDL.SDL_EVENT_WINDOW_RESIZED
              or event.type == SDL.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED
              or event.type == SDL.SDL_EVENT_WINDOW_MOVED) then

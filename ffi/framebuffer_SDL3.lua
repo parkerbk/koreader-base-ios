@@ -128,6 +128,9 @@ function framebuffer:_newBB(w, h)
 end
 
 function framebuffer:_render(bb, x, y, w, h)
+    -- Coming back to the foreground repaints the whole screen.
+    if SDL.isInIOSBackground() then return end
+
     -- x, y, w, h without rotation for SDL rectangle
     local px, py, pw, ph = bb:getPhysicalRect(x, y, w, h)
 
